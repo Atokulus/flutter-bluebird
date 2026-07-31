@@ -1,6 +1,6 @@
 name: bluebird_android
 description: The Android implementation of bluebird, the Bluetooth Low Energy (BLE) plugin for Flutter.
-version: 0.4.0
+version: 0.4.1
 homepage: https://github.com/nebkat/flutter-bluebird
 repository: https://github.com/nebkat/flutter-bluebird
 issue_tracker: https://github.com/nebkat/flutter-bluebird/issues
