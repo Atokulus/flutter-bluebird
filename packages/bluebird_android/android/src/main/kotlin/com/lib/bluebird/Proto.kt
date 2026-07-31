@@ -148,15 +148,8 @@ object Proto {
         val advName = adv?.deviceName
         val txPower = adv?.txPowerLevel ?: min
         val appearance = adv?.let { getAppearanceFromScanRecord(it) } ?: 0
-        val rawMsd = adv?.let { getManufacturerSpecificData(it) }
-
-        // Manufacturer Specific Data
-        val manufacturerData = HashMap<Long, ByteArray>()
-        if (rawMsd != null && rawMsd.size >= 2) {
-            // manufacturer ID uses little-endian order.
-            val manufacturerId = (rawMsd[0].toInt() and 0xFF) or ((rawMsd[1].toInt() and 0xFF) shl 8)
-            manufacturerData[manufacturerId.toLong()] = rawMsd.copyOfRange(2, rawMsd.size)
-        }
+        // Manufacturer Specific Data, keyed by company id.
+        val manufacturerData = adv?.let { getManufacturerData(it) } ?: HashMap()
 
         // Service Data
         val serviceData = HashMap<String, ByteArray>()
@@ -228,18 +221,24 @@ object Proto {
         return 0
     }
 
-    // The original android implementation has a bug - it does not
-    // concatenate multiple MSD in the same advertisement.
-    fun getManufacturerSpecificData(adv: ScanRecord): ByteArray {
+    // Parse manufacturer specific data, keyed by company id.
+    //
+    // android's own ScanRecord.getManufacturerSpecificData() does not
+    // concatenate multiple MSD structures that share a company id, so we walk
+    // the raw AD structures ourselves. Each structure must be attributed to its
+    // *own* company id — the previous implementation lumped every structure into
+    // one blob and treated only the first two bytes as the id, which appended
+    // any later structures' company ids into the first structure's data.
+    fun getManufacturerData(adv: ScanRecord): HashMap<Long, ByteArray> {
         val bytes = adv.bytes
-        val output = ByteArrayOutputStream()
+        val output = HashMap<Long, ByteArrayOutputStream>()
         var n = 0
         while (n < bytes.size) {
             // layout:
             // n[0] = fieldlen
             // n[1] = datatype (MSD)
-            // n[2] = manufacturerId (low)
-            // n[3] = manufacturerId (high)
+            // n[2] = companyId (low)
+            // n[3] = companyId (high)
             // n[4] = data...
             val fieldLen = bytes[n].toInt() and 0xFF
 
@@ -251,15 +250,19 @@ object Proto {
 
             val dataType = bytes[n + 1].toInt() and 0xFF
 
-            // Check for Manufacturer Specific Data type (0xFF)
-            // and that the field is large enough (at least 2 bytes: type + at least 1 data byte)
-            if (dataType == 0xFF && fieldLen >= 2) {
-                output.write(bytes, n + 2, fieldLen - 1)
+            // Manufacturer Specific Data (0xFF), large enough to hold the 2-byte
+            // company id (type + id = 3 bytes).
+            if (dataType == 0xFF && fieldLen >= 3) {
+                // company id uses little-endian order.
+                val companyId = (bytes[n + 2].toInt() and 0xFF) or ((bytes[n + 3].toInt() and 0xFF) shl 8)
+                // append only the payload, skipping the 2-byte company id.
+                output.getOrPut(companyId.toLong()) { ByteArrayOutputStream() }
+                    .write(bytes, n + 4, fieldLen - 3)
             }
 
             n += fieldLen + 1
         }
-        return output.toByteArray()
+        return HashMap(output.mapValues { it.value.toByteArray() })
     }
 
     //////////////////////////////////////////
