@@ -23,7 +23,7 @@ jobs:
       # line-length matches the repo's configured page_width (120). Pinned to a
       # commit SHA for supply-chain safety.
       - name: Analyze
-        uses: zgosalvez/github-actions-analyze-dart@5ca39053dd1eba33fa2c6191215a6f1642a4575e # v3
+        uses: zgosalvez/github-actions-analyze-dart@aedc72ff90f104336ef6210578c923959179b2ad # v5.0.4
         with:
           fail-on-infos: true
           fail-on-warnings: true
