@@ -5,8 +5,7 @@ import 'package:bluebird_platform_interface/bluebird_platform_interface.dart';
 /// Test factories for the generated wire types, so tests read as intent
 /// rather than constructor boilerplate.
 
-BmAttributeId attr(String uuid, [int instance = 0]) =>
-    BmAttributeId(uuid: Uuid(uuid).string, instance: instance);
+BmAttributeId attr(String uuid, [int instance = 0]) => BmAttributeId(uuid: Uuid(uuid).string, instance: instance);
 
 BmCharacteristicProperties props({
   bool read = false,

@@ -28,8 +28,7 @@ class L2capDataChannel {
   static const int _typeData = 0;
   static const int _typeReady = 1;
 
-  final BasicMessageChannel<ByteData?> _channel =
-      const BasicMessageChannel<ByteData?>(channelName, BinaryCodec());
+  final BasicMessageChannel<ByteData?> _channel = const BasicMessageChannel<ByteData?>(channelName, BinaryCodec());
 
   final Map<int, _Inbound> _inbound = {};
   bool _handlerAttached = false;
@@ -76,10 +75,7 @@ class L2capDataChannel {
     if (inbound == null) return null;
 
     final payload = Uint8List.fromList(
-      message.buffer.asUint8List(
-        message.offsetInBytes + _headerLen,
-        message.lengthInBytes - _headerLen,
-      ),
+      message.buffer.asUint8List(message.offsetInBytes + _headerLen, message.lengthInBytes - _headerLen),
     );
     // Resolves when the consumer can take more — this is the native reply, so
     // withholding it stops the peer.
@@ -107,11 +103,7 @@ class _Inbound {
   Completer<void>? _blocked;
 
   _Inbound(this._onFirstListen) {
-    controller = StreamController<Uint8List>(
-      onListen: _onListen,
-      onResume: _release,
-      onCancel: _release,
-    );
+    controller = StreamController<Uint8List>(onListen: _onListen, onResume: _release, onCancel: _release);
   }
 
   void _onListen() {

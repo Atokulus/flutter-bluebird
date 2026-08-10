@@ -29,9 +29,7 @@ void main() {
   test('onL2capChannelClosed surfaces the matching event', () async {
     final next = platform.onL2capChannelClosed.first;
     platform.controller.add(BmScanFailedEvent(errorCode: 1, errorString: 'x')); // filtered out
-    platform.controller.add(
-      BmL2capChannelClosedEvent(channelId: 9, address: 'addr', errorString: 'gone'),
-    );
+    platform.controller.add(BmL2capChannelClosedEvent(channelId: 9, address: 'addr', errorString: 'gone'));
     final event = await next;
     expect(event.channelId, 9);
     expect(event.errorString, 'gone');

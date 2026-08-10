@@ -122,9 +122,7 @@ class _ScanScreenState extends State<ScanScreen> {
           );
         }
       },
-      itemBuilder: (context) => const [
-        PopupMenuItem(value: 'licenses', child: Text('Open-source licenses')),
-      ],
+      itemBuilder: (context) => const [PopupMenuItem(value: 'licenses', child: Text('Open-source licenses'))],
     );
   }
 

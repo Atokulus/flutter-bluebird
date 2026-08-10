@@ -17,11 +17,8 @@ ByteData _frame(int channelId, int type, List<int> payload) {
   return f;
 }
 
-(int, int, List<int>) _parse(ByteData f) => (
-  f.getInt64(0, Endian.big),
-  f.getUint8(8),
-  f.buffer.asUint8List(f.offsetInBytes + 9, f.lengthInBytes - 9),
-);
+(int, int, List<int>) _parse(ByteData f) =>
+    (f.getInt64(0, Endian.big), f.getUint8(8), f.buffer.asUint8List(f.offsetInBytes + 9, f.lengthInBytes - 9));
 
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();

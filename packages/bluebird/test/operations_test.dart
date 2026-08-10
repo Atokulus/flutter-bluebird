@@ -108,10 +108,7 @@ void main() {
 
   test('write rejects a long write without response', () async {
     await connectAndDiscover();
-    expect(
-      () => chr().write([1], withoutResponse: true, allowLongWrite: true),
-      throwsArgumentError,
-    );
+    expect(() => chr().write([1], withoutResponse: true, allowLongWrite: true), throwsArgumentError);
   });
 
   test('subscribe delegates the notify enable to the platform', () async {

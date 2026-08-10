@@ -124,8 +124,7 @@ final class BluebirdAndroid extends BluebirdPlatform {
       _call('openL2capChannel', () => _api.openL2capChannel(address, psm, secure));
 
   @override
-  Future<void> closeL2capChannel(int channelId) =>
-      _call('closeL2capChannel', () => _api.closeL2capChannel(channelId));
+  Future<void> closeL2capChannel(int channelId) => _call('closeL2capChannel', () => _api.closeL2capChannel(channelId));
 
   Future<T> _call<T>(String method, Future<T> Function() fn) async {
     await (_restartFuture ??= _flutterRestart());

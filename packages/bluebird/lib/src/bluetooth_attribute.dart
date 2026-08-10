@@ -52,13 +52,17 @@ class BluebirdScopedLogger {
     Bluebird.logger.log(level, "${_target.logPath} $resolved", error, stackTrace);
   }
 
-  void finest(Object? message, [Object? error, StackTrace? stackTrace]) => log(Level.FINEST, message, error, stackTrace);
+  void finest(Object? message, [Object? error, StackTrace? stackTrace]) =>
+      log(Level.FINEST, message, error, stackTrace);
   void finer(Object? message, [Object? error, StackTrace? stackTrace]) => log(Level.FINER, message, error, stackTrace);
   void fine(Object? message, [Object? error, StackTrace? stackTrace]) => log(Level.FINE, message, error, stackTrace);
-  void config(Object? message, [Object? error, StackTrace? stackTrace]) => log(Level.CONFIG, message, error, stackTrace);
+  void config(Object? message, [Object? error, StackTrace? stackTrace]) =>
+      log(Level.CONFIG, message, error, stackTrace);
   void info(Object? message, [Object? error, StackTrace? stackTrace]) => log(Level.INFO, message, error, stackTrace);
-  void warning(Object? message, [Object? error, StackTrace? stackTrace]) => log(Level.WARNING, message, error, stackTrace);
-  void severe(Object? message, [Object? error, StackTrace? stackTrace]) => log(Level.SEVERE, message, error, stackTrace);
+  void warning(Object? message, [Object? error, StackTrace? stackTrace]) =>
+      log(Level.WARNING, message, error, stackTrace);
+  void severe(Object? message, [Object? error, StackTrace? stackTrace]) =>
+      log(Level.SEVERE, message, error, stackTrace);
   void shout(Object? message, [Object? error, StackTrace? stackTrace]) => log(Level.SHOUT, message, error, stackTrace);
 }
 
@@ -79,8 +83,7 @@ class BluetoothAttributeId {
   const BluetoothAttributeId(this.uuid, [this.index]);
 
   @internal
-  BluetoothAttributeId.fromBm(BmAttributeId id)
-    : this(Uuid(id.uuid), id.instance);
+  BluetoothAttributeId.fromBm(BmAttributeId id) : this(Uuid(id.uuid), id.instance);
 
   @internal
   BmAttributeId get bm => BmAttributeId(uuid: uuid.string, instance: index ?? 0);

@@ -78,5 +78,6 @@ class BluetoothL2CapChannel {
   void onRemoteClosed() => _markClosed();
 
   @override
-  String toString() => 'BluetoothL2CapChannel{remoteId: ${device.remoteId}, psm: $psm, channelId: $channelId, closed: $_closed}';
+  String toString() =>
+      'BluetoothL2CapChannel{remoteId: ${device.remoteId}, psm: $psm, channelId: $channelId, closed: $_closed}';
 }
