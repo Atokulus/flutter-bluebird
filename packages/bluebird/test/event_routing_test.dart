@@ -236,7 +236,7 @@ void main() {
   });
 
   test('detached-from-engine event stops an active scan', () async {
-    final sub = Bluebird.scan().listen((_) {});
+    final sub = Bluebird.performScan().listen((_) {});
     await pump();
     expect(Bluebird.isScanning.value, isTrue);
     fake.emit(BmDetachedFromEngineEvent());

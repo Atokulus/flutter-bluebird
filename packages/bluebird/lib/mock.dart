@@ -43,7 +43,11 @@ class BluebirdMockable {
 
   ValueStream<bool> get isScanning => Bluebird.isScanning;
 
-  Stream<ScanResult> scan({
+  ValueStream<List<ScanResult>> get scanResults => Bluebird.scanResults;
+
+  Stream<ScanResult> get scanAdvertisements => Bluebird.scanAdvertisements;
+
+  Future<void> startScan({
     List<Uuid> withServices = const [],
     List<String> withRemoteIds = const [],
     List<String> withNames = const [],
@@ -57,7 +61,39 @@ class BluebirdMockable {
     bool androidUsesFineLocation = false,
     List<Uuid> webOptionalServices = const [],
     Duration? timeout,
-  }) => Bluebird.scan(
+  }) => Bluebird.startScan(
+    withServices: withServices,
+    withRemoteIds: withRemoteIds,
+    withNames: withNames,
+    withKeywords: withKeywords,
+    withMsd: withMsd,
+    withServiceData: withServiceData,
+    continuousUpdates: continuousUpdates,
+    continuousDivisor: continuousDivisor,
+    androidLegacy: androidLegacy,
+    androidScanMode: androidScanMode,
+    androidUsesFineLocation: androidUsesFineLocation,
+    webOptionalServices: webOptionalServices,
+    timeout: timeout,
+  );
+
+  Future<void> stopScan() => Bluebird.stopScan();
+
+  Stream<ScanResult> performScan({
+    List<Uuid> withServices = const [],
+    List<String> withRemoteIds = const [],
+    List<String> withNames = const [],
+    List<String> withKeywords = const [],
+    List<MsdFilter> withMsd = const [],
+    List<ServiceDataFilter> withServiceData = const [],
+    bool continuousUpdates = false,
+    int continuousDivisor = 1,
+    bool androidLegacy = false,
+    AndroidScanMode androidScanMode = AndroidScanMode.lowLatency,
+    bool androidUsesFineLocation = false,
+    List<Uuid> webOptionalServices = const [],
+    Duration? timeout,
+  }) => Bluebird.performScan(
     withServices: withServices,
     withRemoteIds: withRemoteIds,
     withNames: withNames,

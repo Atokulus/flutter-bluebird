@@ -16,7 +16,7 @@ void main() {
 
   test('scan() emits each advertisement individually', () async {
     final seen = <String>[];
-    final sub = Bluebird.scan().listen((r) => seen.add(r.address));
+    final sub = Bluebird.performScan().listen((r) => seen.add(r.address));
     await pumpEventQueue();
     expect(fake.calls, contains('startScan'));
     expect(Bluebird.isScanning.value, isTrue);
@@ -34,7 +34,7 @@ void main() {
 
   test('accumulate() collects advertisements into a de-duplicated list', () async {
     var latest = <ScanResult>[];
-    final sub = Bluebird.scan().accumulate().listen((list) => latest = list);
+    final sub = Bluebird.performScan().accumulate().listen((list) => latest = list);
     await pumpEventQueue();
 
     fake.emit(BmScanAdvertisementEvent(advertisement: bmAdv('AA', advName: 'one')));
@@ -52,7 +52,7 @@ void main() {
   });
 
   test('scans with filters applied', () async {
-    final sub = Bluebird.scan(
+    final sub = Bluebird.performScan(
       withServices: [Uuid('180f')],
       withMsd: [
         MsdFilter(0x02e5, data: [1], mask: [0xff]),
@@ -68,7 +68,7 @@ void main() {
   });
 
   test('cancelling the subscription stops the scan', () async {
-    final sub = Bluebird.scan().listen((_) {});
+    final sub = Bluebird.performScan().listen((_) {});
     await pumpEventQueue();
     expect(Bluebird.isScanning.value, isTrue);
 
@@ -81,7 +81,7 @@ void main() {
   test('scan(timeout:) stops the scan and completes the stream normally', () async {
     final seen = <String>[];
     var done = false;
-    final sub = Bluebird.scan(
+    final sub = Bluebird.performScan(
       timeout: const Duration(milliseconds: 50),
     ).listen((r) => seen.add(r.address), onDone: () => done = true);
     await pumpEventQueue();
@@ -102,7 +102,7 @@ void main() {
   });
 
   test('scan(timeout:).accumulate().last yields the final device list', () async {
-    final future = Bluebird.scan(timeout: const Duration(milliseconds: 50)).accumulate().last;
+    final future = Bluebird.performScan(timeout: const Duration(milliseconds: 50)).accumulate().last;
     await pumpEventQueue();
 
     fake.emit(BmScanAdvertisementEvent(advertisement: bmAdv('AA')));
@@ -114,20 +114,78 @@ void main() {
   });
 
   test('a second concurrent scan throws operationInProgress', () async {
-    final sub = Bluebird.scan().listen((_) {});
+    final sub = Bluebird.performScan().listen((_) {});
     await pumpEventQueue();
     expect(Bluebird.isScanning.value, isTrue);
 
     await expectLater(
-      Bluebird.scan().first,
+      Bluebird.performScan().first,
       throwsA(isA<BluebirdException>().having((e) => e.code, 'code', BluebirdErrorCode.operationInProgress)),
     );
     await sub.cancel();
   });
 
+  group('Bluebird.startScan (stateful)', () {
+    test('startScan drives scanResults (list, value-retaining) and scanAdvertisements (per-ad)', () async {
+      expect(Bluebird.isScanning.value, isFalse);
+      expect(Bluebird.scanResults.value, isEmpty);
+
+      final ads = <String>[];
+      final adsSub = Bluebird.scanAdvertisements.listen((r) => ads.add(r.address));
+
+      await Bluebird.startScan();
+      await pumpEventQueue();
+      expect(Bluebird.isScanning.value, isTrue);
+      expect(fake.calls, contains('startScan'));
+
+      fake.emit(BmScanAdvertisementEvent(advertisement: bmAdv('AA', advName: 'one')));
+      fake.emit(BmScanAdvertisementEvent(advertisement: bmAdv('BB')));
+      // a fresh AA advertisement coalesces in the accumulated list
+      fake.emit(BmScanAdvertisementEvent(advertisement: bmAdv('AA', rssi: -40)));
+      await pumpEventQueue();
+
+      // scanAdvertisements: every advertisement, one at a time
+      expect(ads, ['AA', 'BB', 'AA']);
+      // scanResults: the de-duplicated device list, readable via .value
+      expect(Bluebird.scanResults.value.map((r) => r.address), unorderedEquals(['AA', 'BB']));
+      expect(Bluebird.scanResults.value.firstWhere((r) => r.address == 'AA').rssi, -40);
+
+      await Bluebird.stopScan();
+      await pumpEventQueue();
+      expect(Bluebird.isScanning.value, isFalse);
+      expect(fake.calls, contains('stopScan'));
+      // scanResults retained after stop, until the next start
+      expect(Bluebird.scanResults.value, hasLength(2));
+
+      await adsSub.cancel();
+    });
+
+    test('startScan() and performScan() contend for the one session', () async {
+      // startScan() while a performScan() is active throws
+      final scanSub = Bluebird.performScan().listen((_) {});
+      await pumpEventQueue();
+      await expectLater(
+        Bluebird.startScan(),
+        throwsA(isA<BluebirdException>().having((e) => e.code, 'code', BluebirdErrorCode.operationInProgress)),
+      );
+      await scanSub.cancel();
+      await pumpEventQueue();
+
+      // and the reverse: performScan() while a startScan() is active throws
+      await Bluebird.startScan();
+      await pumpEventQueue(); // let the underlying scan claim the guard
+      expect(Bluebird.isScanning.value, isTrue);
+      await expectLater(
+        Bluebird.performScan().first,
+        throwsA(isA<BluebirdException>().having((e) => e.code, 'code', BluebirdErrorCode.operationInProgress)),
+      );
+      await Bluebird.stopScan();
+    });
+  });
+
   test('a scan failure surfaces as an error and stops scanning', () async {
     final errors = <Object>[];
-    final sub = Bluebird.scan().listen((_) {}, onError: errors.add);
+    final sub = Bluebird.performScan().listen((_) {}, onError: errors.add);
     await pumpEventQueue();
 
     fake.emit(BmScanFailedEvent(errorCode: 2, errorString: 'bluetooth off'));

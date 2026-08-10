@@ -26,7 +26,7 @@ void main() {
 
   test('scan forwards and is observable via isScanning', () async {
     expect(bluebird.isScanning.value, isFalse);
-    final sub = bluebird.scan().listen((_) {});
+    final sub = bluebird.performScan().listen((_) {});
     await pumpEventQueue();
     expect(bluebird.isScanning.value, isTrue);
     await sub.cancel();

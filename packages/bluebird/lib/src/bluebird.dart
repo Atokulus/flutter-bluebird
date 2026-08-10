@@ -32,7 +32,7 @@ class Bluebird {
     hashCode: (a) => a.toLowerCase().hashCode,
   );
 
-  /// tracks whether a [scan] is currently running (also the guard that prevents
+  /// tracks whether a scan is currently running (also the guard that prevents
   /// two concurrent scans on the single radio). Scanning is driven entirely by
   /// us (not the platform), so we own the value and re-emit it via [isScanning].
   static bool _isScanningNow = false;
@@ -42,6 +42,14 @@ class Bluebird {
     _isScanningNow = value;
     _isScanningController.add(value);
   }
+
+  // Managed-scan state, driven by [startScan]. Each advertisement flows into
+  // [scanAdvertisements]; [scanResults] is that, accumulated + value-retaining.
+  static StreamSubscription<ScanResult>? _scanSub; // performScan -> _advertisements
+  static StreamSubscription<List<ScanResult>>? _scanAccumSub; // accumulate -> _scanList
+  static final _advertisementsController = StreamController<ScanResult>.broadcast();
+  static List<ScanResult> _scanList = const [];
+  static final _scanListController = StreamController<List<ScanResult>>.broadcast();
 
   /// the last known adapter state
   static BluetoothAdapterState? _adapterStateNow;
@@ -56,6 +64,11 @@ class Bluebird {
     _devices.clear();
     _adapterStateNow = null;
     _setScanning(false);
+    _scanSub?.cancel();
+    _scanAccumSub?.cancel();
+    _scanSub = null;
+    _scanAccumSub = null;
+    _scanList = const [];
     _logLevel = LogLevel.debug;
     _loggerPrintSub?.cancel();
     _loggerPrintSub = null;
@@ -75,11 +88,23 @@ class Bluebird {
   /// Return the friendly Bluetooth name of the local Bluetooth adapter
   static Future<String> get adapterName async => await invoke("getAdapterName", (p) => p.getAdapterName());
 
-  /// whether a [scan] is currently running, as a stream that also exposes the
-  /// current value:
+  /// whether a scan (via [startScan] or [performScan]) is currently running, as
+  /// a stream that also exposes the current value:
   ///   - `Bluebird.isScanning.value` is `true` if scanning right now
   static ValueStream<bool> get isScanning =>
       ValueStream(value: () => _isScanningNow, changes: () => _isScanningController.stream);
+
+  /// The growing, de-duplicated device list of the scan started via [startScan],
+  /// as a stream that also exposes the current value. Value-retaining: a late
+  /// listener immediately sees the current devices. Reset to `[]` on each
+  /// [startScan]; retained after [stopScan] until the next start.
+  static ValueStream<List<ScanResult>> get scanResults =>
+      ValueStream(value: () => _scanList, changes: () => _scanListController.stream);
+
+  /// Each advertisement of the scan started via [startScan], one [ScanResult] at
+  /// a time (broadcast; silent when no scan is running). [scanResults] is this,
+  /// accumulated into a de-duplicated device list.
+  static Stream<ScanResult> get scanAdvertisements => _advertisementsController.stream;
 
   /// The raw stream of all app-level events, of every type.
   ///   - [BluebirdEvent] is `sealed`, so you can `switch` over it exhaustively,
@@ -177,15 +202,84 @@ class Bluebird {
   static BluetoothDevice _deviceForBm(BmBluetoothDevice d) =>
       deviceForAddress(d.address)..platformNameInternal = d.platformName;
 
-  /// Scan for Bluetooth Low Energy devices, as a stream of advertisements.
+  /// Starts a scan and accumulates its de-duplicated devices into [scanResults]
+  /// (value-retaining — read `.value` or listen). Each raw advertisement is also
+  /// available one at a time via [scanAdvertisements]. Stop it with [stopScan];
+  /// [isScanning] tracks whether it is running. Only one scan may run at a time
+  /// (the radio is a single resource); [startScan] throws
+  /// [BluebirdErrorCode.operationInProgress] if one already is.
+  ///
+  /// Scan errors are logged to [logger]; use [performScan] directly if you need
+  /// to observe them. See [performScan] for the filter/argument semantics.
+  static Future<void> startScan({
+    List<Uuid> withServices = const [],
+    List<String> withRemoteIds = const [],
+    List<String> withNames = const [],
+    List<String> withKeywords = const [],
+    List<MsdFilter> withMsd = const [],
+    List<ServiceDataFilter> withServiceData = const [],
+    bool continuousUpdates = false,
+    int continuousDivisor = 1,
+    bool androidLegacy = false,
+    AndroidScanMode androidScanMode = AndroidScanMode.lowLatency,
+    bool androidUsesFineLocation = false,
+    List<Uuid> webOptionalServices = const [],
+    Duration? timeout,
+  }) async {
+    if (_isScanningNow) {
+      throw BluebirdException("scan", BluebirdErrorCode.operationInProgress, "a scan is already in progress");
+    }
+    _scanList = const [];
+    _scanListController.add(_scanList);
+    // Maintain the value-retaining [scanResults] by accumulating the raw
+    // advertisement stream (reusing the accumulate operator). Subscribed before
+    // the pump below so it sees every advertisement.
+    _scanAccumSub = _advertisementsController.stream.accumulate().listen((list) {
+      _scanList = list;
+      if (!_scanListController.isClosed) _scanListController.add(list);
+    });
+    _scanSub =
+        performScan(
+          withServices: withServices,
+          withRemoteIds: withRemoteIds,
+          withNames: withNames,
+          withKeywords: withKeywords,
+          withMsd: withMsd,
+          withServiceData: withServiceData,
+          continuousUpdates: continuousUpdates,
+          continuousDivisor: continuousDivisor,
+          androidLegacy: androidLegacy,
+          androidScanMode: androidScanMode,
+          androidUsesFineLocation: androidUsesFineLocation,
+          webOptionalServices: webOptionalServices,
+          timeout: timeout,
+        ).listen(
+          (r) {
+            if (!_advertisementsController.isClosed) _advertisementsController.add(r);
+          },
+          onError: (Object e, StackTrace st) => logger.warning("scan failed", e, st),
+          onDone: () => _scanSub = null,
+        );
+  }
+
+  /// Stops a scan started via [startScan]. Idempotent.
+  static Future<void> stopScan() async {
+    await _scanSub?.cancel();
+    await _scanAccumSub?.cancel();
+    _scanSub = null;
+    _scanAccumSub = null;
+  }
+
+  /// Scan for Bluetooth Low Energy devices, as a stream of advertisements — the
+  /// all-in-one form (no separate stop). For the stateful start/stop/results
+  /// model, use [startScan] / [stopScan] / [scanResults] instead.
   ///
   /// The native scan starts when the returned stream is first listened to, and
   /// stops when the subscription is cancelled or after [timeout] elapses (if
-  /// set) — there is no separate `stopScan`. On [timeout] the stream *completes
-  /// normally* (it does not error), so `scan(timeout: …).accumulate().last`
-  /// yields the final device list. Only one scan may run at a time (the radio is
-  /// a single resource); listening while a scan is already running throws
-  /// [BluebirdErrorCode.operationInProgress].
+  /// set). On [timeout] the stream *completes normally* (it does not error), so
+  /// `performScan(timeout: …).accumulate().last` yields the final device list.
+  /// Only one scan may run at a time (the radio is a single resource); listening
+  /// while a scan is already running throws [BluebirdErrorCode.operationInProgress].
   ///
   /// Each advertisement is emitted one at a time. To collect them into a
   /// growing, de-duplicated device list, use [ScanResultAccumulate.accumulate].
@@ -212,7 +306,7 @@ class Bluebird {
   ///   - [androidUsesFineLocation] request `ACCESS_FINE_LOCATION` permission at runtime
   ///   - [timeout] if set, stop scanning and complete the stream (normally, not
   ///        with an error) after this duration; otherwise scan until cancelled
-  static Stream<ScanResult> scan({
+  static Stream<ScanResult> performScan({
     List<Uuid> withServices = const [],
     List<String> withRemoteIds = const [],
     List<String> withNames = const [],

@@ -49,7 +49,7 @@ class _ScanScreenState extends State<ScanScreen> {
   void _startScan({Duration timeout = const Duration(seconds: 15)}) {
     _scanSubscription?.cancel();
     _scanResults = [];
-    _scanSubscription = Bluebird.scan(timeout: timeout).accumulate().listen(
+    _scanSubscription = Bluebird.performScan(timeout: timeout).accumulate().listen(
       (results) {
         _scanResults = results;
         if (mounted) setState(() {});
