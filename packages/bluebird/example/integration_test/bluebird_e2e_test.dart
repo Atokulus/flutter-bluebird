@@ -78,7 +78,7 @@ void main() {
     final completer = Completer<ScanResult>();
     ScanResult? partial;
 
-    final sub = Bluebird.scan(withNames: const [fixtureName]).listen((r) {
+    final sub = Bluebird.performScan(withNames: const [fixtureName]).listen((r) {
       final adv = r.advertisementData;
       if (adv.advName != fixtureName && r.platformName != fixtureName) return;
       partial = r;
