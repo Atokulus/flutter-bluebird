@@ -23,12 +23,14 @@ class _DeviceScreenState extends State<DeviceScreen> {
   int? _rssi;
   int? _mtuSize;
   BluetoothConnectionState _connectionState = BluetoothConnectionState.disconnected;
+  BluetoothBondState? _bondState;
   List<BluetoothService> get _services => widget.device.services;
   bool _isDiscoveringServices = false;
 
   late StreamSubscription<BluetoothConnectionState> _connectionStateSubscription;
   late StreamSubscription<int> _mtuSubscription;
   late StreamSubscription<BluetoothAdapterState> _adapterStateSubscription;
+  StreamSubscription<BluetoothBondState>? _bondStateSubscription;
 
   @override
   void initState() {
@@ -58,6 +60,15 @@ class _DeviceScreenState extends State<DeviceScreen> {
         Navigator.of(context).pop();
       }
     });
+
+    if (!kIsWeb && Platform.isAndroid) {
+      _bondStateSubscription = widget.device.bondState.listen((state) {
+        _bondState = state;
+        if (mounted) {
+          setState(() {});
+        }
+      });
+    }
   }
 
   @override
@@ -65,6 +76,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
     _connectionStateSubscription.cancel();
     _mtuSubscription.cancel();
     _adapterStateSubscription.cancel();
+    _bondStateSubscription?.cancel();
     super.dispose();
   }
 
@@ -135,6 +147,16 @@ class _DeviceScreenState extends State<DeviceScreen> {
       Snackbar.show("Request Mtu: Success", success: true);
     } catch (e) {
       Snackbar.show(prettyException("Change Mtu Error:", e), success: false);
+      print(e);
+    }
+  }
+
+  Future onRemoveBondPressed() async {
+    try {
+      await widget.device.removeBond();
+      Snackbar.show("Remove Bond: Success", success: true);
+    } catch (e) {
+      Snackbar.show(prettyException("Remove Bond Error:", e), success: false);
       print(e);
     }
   }
@@ -286,6 +308,27 @@ class _DeviceScreenState extends State<DeviceScreen> {
     );
   }
 
+  Widget buildBondStateTile(BuildContext context) {
+    final bondState = _bondState;
+    return ListTile(
+      title: const Text('Bond State'),
+      subtitle: Text(switch (bondState) {
+        null => 'Unknown',
+        BluetoothBondState.none => 'Not bonded',
+        BluetoothBondState.bonding => 'Bonding…',
+        BluetoothBondState.bonded => 'Bonded',
+      }),
+      trailing: bondState == BluetoothBondState.bonded
+          ? OutlinedButton.icon(
+              icon: const Icon(Icons.link_off),
+              label: const Text('Remove Bond'),
+              style: OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+              onPressed: onRemoveBondPressed,
+            )
+          : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final name = widget.device.platformName.isNotEmpty ? widget.device.platformName : 'Unknown';
@@ -300,6 +343,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
             _buildActions(context),
             const Divider(height: 24),
             buildMtuTile(context),
+            if (!kIsWeb && Platform.isAndroid) buildBondStateTile(context),
             ..._buildServiceTiles(context, widget.device),
           ],
         ),
