@@ -41,13 +41,22 @@ await Bluebird.adapterReady();
 ### Scan for devices
 
 ```dart
-await for (final ScanResult r in Bluebird.scan(withServices: [Uuid("180D")], withNames: ["Bluno"])) {
-  print('${r.device.remoteId}: "${r.advertisementData.advName}"');
-}
+// The growing, de-duplicated device list, updated as devices are discovered
+final subscription = Bluebird.scanResults.listen((List<ScanResult> results) {
+  for (final ScanResult r in results) {
+    print('${r.device.remoteId}: "${r.advertisementData.advName}"');
+  }
+});
+
+// Start scanning
+await Bluebird.startScan(withServices: [Uuid("180D")], withNames: ["Bluno"]);
+
+// ... and stop when you're done
+await Bluebird.stopScan();
 ```
 
 > [!TIP]
-> No need to explicitly `startScan`/`stopScan` - once you break from the loop (or cancel the underlying subscription) the scan is automatically stopped!
+> Prefer a self-stopping stream? `Bluebird.performScan(...)` starts the scan when you listen and stops it when you cancel (or `break` from an `await for`) — no explicit `stopScan` needed.
 
 ### Connect to a device
 
@@ -208,7 +217,7 @@ https://developer.android.com/about/versions/12/features/bluetooth-permissions -
 And set **androidUsesFineLocation** when scanning:
 ```dart
 // Start scanning
-Bluebird.scan(androidUsesFineLocation: true).listen((r) { /* ... */ });
+await Bluebird.startScan(androidUsesFineLocation: true);
 ```
 
 #### Proguard
@@ -254,7 +263,7 @@ Make sure you have granted access to the Bluetooth hardware:
 
 Every error returned by the native platform is checked and thrown as an exception where appropriate. See [Reference](#reference) for a list of throwable functions.
 
-**Streams:** Most state streams returned by Bluebird (e.g. `adapterState`, `device.connectionState`, `device.mtu`) never emit errors and never close, so there's no need to handle `onError` or `onDone`. The exceptions are the *operation* streams that can fail: `Bluebird.scan()` (errors if a scan cannot start) and `characteristic.notifications` / `characteristic.values` (error if enabling notify fails) — handle `onError` on those.
+**Streams:** Most state streams returned by Bluebird (e.g. `adapterState`, `device.connectionState`, `device.mtu`) never emit errors and never close, so there's no need to handle `onError` or `onDone`. The exceptions are the *operation* streams that can fail: `Bluebird.performScan()` (errors if a scan cannot start; `startScan` surfaces the same as a thrown exception) and `characteristic.notifications` / `characteristic.values` (error if enabling notify fails) — handle `onError` on those.
 
 ### Logging
 
@@ -383,11 +392,14 @@ String text = await userDescription.read();
 
 ### Accumulating scan results
 
-`Bluebird.scan()` emits one advertisement at a time. To collect them into a growing,
-de-duplicated device list (keyed by address), use `.accumulate()`:
+`Bluebird.scanResults` is already the growing, de-duplicated device list (keyed by
+address) — that's what `startScan` accumulates into. If instead you have a raw
+advertisement stream — `Bluebird.scanAdvertisements` or `Bluebird.performScan()`,
+which emit one `ScanResult` at a time — use `.accumulate()` to collect them the same
+way (with control over the options below):
 
 ```dart
-Bluebird.scan().accumulate().listen((List<ScanResult> results) {
+Bluebird.performScan().accumulate().listen((List<ScanResult> results) {
   // the full list so far, updated on every advertisement
 });
 ```
@@ -548,7 +560,11 @@ To mock `Bluebird` for development, refer to the [Mocking Guide](MOCKING.md).
 | turnOn                 | :white_check_mark: |                    | :fire: | Turns on the bluetooth adapter                             |
 | adapterState        🌀 | :white_check_mark: | :white_check_mark: |        | Async value + stream of on/off states (`await .value` for current) |
 | adapterReady           | :white_check_mark: | :white_check_mark: | :fire: | Completes once the adapter is on; throws if unavailable/unauthorized |
-| scan                🌀 | :white_check_mark: | :white_check_mark: | :fire: | Stream of scan advertisements; stops when cancelled        |
+| startScan               | :white_check_mark: | :white_check_mark: | :fire: | Start a scan; devices accumulate into `scanResults`        |
+| stopScan                | :white_check_mark: | :white_check_mark: |        | Stop a scan started with `startScan`                       |
+| scanResults         🌀 | :white_check_mark: | :white_check_mark: |        | Value + stream of the de-duplicated device list (`.value`) |
+| scanAdvertisements  🌀 | :white_check_mark: | :white_check_mark: |        | Stream of raw advertisements, one `ScanResult` at a time   |
+| performScan         🌀 | :white_check_mark: | :white_check_mark: | :fire: | All-in-one advertisement stream; stops when cancelled      |
 | isScanning          🌀 | :white_check_mark: | :white_check_mark: |        | Value + stream of the current scanning state (`.value`)    |
 | connectedDevices    ⚡  | :white_check_mark: | :white_check_mark: |        | List of devices connected to *your app*                    |
 | systemDevices          | :white_check_mark: | :white_check_mark: | :fire: | List of devices connected to the system, even by other apps|
@@ -780,7 +796,7 @@ iOS does not support iBeacons using CoreBluetooth. You must find a plugin meant 
 **Android:**
 
 1. you need to enable location permissions, see [Getting Started](#getting-started)
-2. you must pass `androidUsesFineLocation:true` to `Bluebird.scan()`.
+2. you must pass `androidUsesFineLocation:true` to `Bluebird.startScan()`.
 
 ---
 

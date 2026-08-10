@@ -11,12 +11,53 @@ same. This guide covers what changed.
 
 ```yaml
 dependencies:
-  bluebird: ^0.1.0   # was: flutter_blue_plus
+  bluebird: ^0.4.1   # was: flutter_blue_plus
 ```
 
 ```dart
 import 'package:bluebird/bluebird.dart';   // was: package:flutter_blue_plus/flutter_blue_plus.dart
 ```
+
+## Discovering services & characteristics
+
+In flutter_blue_plus you can construct a `BluetoothCharacteristic` yourself from a
+`remoteId` plus service/characteristic UUIDs and read or write it straight away.
+In bluebird a characteristic (or descriptor) is only ever obtained by **discovering
+it** — there is no public constructor. Walk the tree from `discoverServices()`:
+
+```dart
+final services = await device.discoverServices();
+final service = services.firstWhere((s) => s.uuid == Uuid('180d'));
+final characteristic = service.characteristics.firstWhere((c) => c.uuid == Uuid('2a37'));
+await characteristic.read();
+```
+
+The discovered tree is cached on `device.services` (empty until you call
+`discoverServices()`; re-discover when the peer signals its services changed).
+Descriptors hang off `characteristic.descriptors` the same way.
+
+To ease migration, a small extension recovers the flutter_blue_plus habit of
+grabbing a characteristic by UUID alone — it just searches every discovered
+service:
+
+```dart
+extension FindCharacteristic on BluetoothDevice {
+  BluetoothCharacteristic? findCharacteristicOrNull(Uuid uuid) {
+    for (final service in services) {
+      for (final characteristic in service.characteristics) {
+        if (characteristic.uuid == uuid) return characteristic;
+      }
+    }
+    return null;
+  }
+}
+```
+
+**Why:** a UUID does not uniquely identify an attribute — the same service or
+characteristic UUID can legally appear more than once on a device. bluebird
+identifies each attribute by a discovered instance token (`BluetoothAttributeId`)
+that disambiguates duplicates, so every read/write targets the exact attribute
+the device exposed rather than a handle fabricated client-side that may not exist.
 
 ## Renames
 
@@ -32,35 +73,53 @@ passed `List<Guid>` — e.g. `withServices` — now takes `List<Uuid>`.
 
 ## Scanning
 
-Scanning is now a single stream you listen to, rather than a start/stop pair
-plus a separate results stream. `scan()` starts when you listen and stops when
-you cancel.
+Scanning keeps the same start / observe / stop shape as flutter_blue_plus —
+`startScan(...)`, watch `scanResults` for the growing device list, and
+`stopScan()` when done. The names are almost identical:
 
 ```dart
 // flutter_blue_plus
 var sub = FlutterBluePlus.scanResults.listen((results) { ... });
 await FlutterBluePlus.startScan(withServices: [Guid('180d')], timeout: Duration(seconds: 15));
+// ... later:
 await FlutterBluePlus.stopScan();
 
 // bluebird
-final sub = Bluebird.scan(withServices: [Uuid('180d')]).accumulate().listen((results) { ... });
-// ... later, to stop scanning:
-await sub.cancel();
+final sub = Bluebird.scanResults.listen((results) { ... });
+await Bluebird.startScan(withServices: [Uuid('180d')], timeout: Duration(seconds: 15));
+// ... later:
+await Bluebird.stopScan();
 ```
 
 | flutter_blue_plus | bluebird |
 | --- | --- |
-| `FlutterBluePlus.startScan(...)` + `FlutterBluePlus.stopScan()` | listen to / cancel `Bluebird.scan(...)` |
-| `FlutterBluePlus.scanResults` (growing device list) | `Bluebird.scan(...).accumulate()` |
-| `FlutterBluePlus.onScanResults` | `Bluebird.scan(...).accumulate()` (a fresh `scan()` never replays a previous scan) |
-| `oneByOne: true` / individual advertisements | `Bluebird.scan(...)` — the base stream yields one `ScanResult` at a time |
-| `removeIfGone:` on `startScan` | `Bluebird.scan(...).accumulate(removeIfGone: ...)` |
+| `FlutterBluePlus.startScan(...)` | `Bluebird.startScan(...)` |
+| `FlutterBluePlus.stopScan()` | `Bluebird.stopScan()` |
+| `FlutterBluePlus.scanResults` (growing device list) | `Bluebird.scanResults` (also exposes `.value`) |
 | `FlutterBluePlus.isScanningNow` | `Bluebird.isScanning.value` |
-| `FlutterBluePlus.isScanning` (`Stream<bool>`) | `Bluebird.isScanning` (`ValueStream<bool>`; listen the same way) |
+| `FlutterBluePlus.isScanning` (`Stream<bool>`) | `Bluebird.isScanning` (listen the same way) |
+
+(`Bluebird.scanResults` is the de-duplicated device list; for the raw
+one-`ScanResult`-per-advertisement feed use `Bluebird.scanAdvertisements`.)
 
 Scan filter arguments (`withServices`, `withNames`, `withKeywords`, `withMsd`,
 `withServiceData`, `androidScanMode`, `continuousUpdates`, …) are unchanged apart
 from `Guid` → `Uuid`.
+
+## Advertisements
+
+`AdvertisementData.advName` is `String?`. It is `null` when the advertisement
+carries no name, rather than an empty string, so provide a fallback when you
+need something to display:
+
+```dart
+final name = result.advertisementData.advName ?? result.device.platformName;
+```
+
+The remaining fields — `manufacturerData` (`Map<int, List<int>>`), `serviceData`,
+`serviceUuids`, `txPowerLevel`, `appearance`, and `connectable` — keep the same
+names and types, with `Guid` → `Uuid` in the `serviceData` keys and
+`serviceUuids`.
 
 ## Adapter state
 
@@ -72,10 +131,31 @@ var now = FlutterBluePlus.adapterStateNow;
 var now = Bluebird.adapterState.value;
 ```
 
-`Bluebird.adapterState` is still a stream you can `listen` to; it just also
-exposes the current value via `.value`. The `BluetoothAdapterState`,
-`BluetoothConnectionState`, and `BluetoothBondState` enums keep the same names
-and values.
+`Bluebird.adapterState` is a stream you can `listen` to and also exposes the
+current value via `.value`. The `BluetoothAdapterState` and `BluetoothBondState`
+enums keep the same names and values as flutter_blue_plus.
+
+## Connection state
+
+`device.connectionState` is a `ValueStream<BluetoothConnectionState>`: read the
+current value with `.value` or `listen` for changes. The enum carries two
+transient states alongside the terminal ones:
+
+```dart
+enum BluetoothConnectionState { disconnected, connected, connecting, disconnecting }
+```
+
+`connecting` and `disconnecting` are synthesized on the Dart side around
+`device.connect()` / `device.disconnect()` — the platforms report only the
+terminal states — so a `switch` over `connectionState` must handle all four.
+
+There is no `device.isDisconnected`. Use `!device.isConnected`, or compare
+against `disconnected` when you need to tell a fully-disconnected device from one
+mid-transition:
+
+```dart
+if (device.connectionState.value == BluetoothConnectionState.disconnected) { ... }
+```
 
 ## Characteristic values & notifications
 
