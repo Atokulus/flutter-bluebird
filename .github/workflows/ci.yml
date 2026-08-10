@@ -20,10 +20,9 @@ jobs:
       # Runs `dart analyze` + a `dart format` check and surfaces findings as
       # GitHub annotations (run summary + inline on the PR). fail-on-infos/
       # warnings keep the strictness of the old `flutter analyze` gate;
-      # line-length matches the repo's configured page_width (120). Pinned to a
-      # commit SHA for supply-chain safety.
+      # line-length matches the repo's configured page_width (120).
       - name: Analyze
-        uses: zgosalvez/github-actions-analyze-dart@aedc72ff90f104336ef6210578c923959179b2ad # v5.0.4
+        uses: zgosalvez/github-actions-analyze-dart@v5
         with:
           fail-on-infos: true
           fail-on-warnings: true
