@@ -17,8 +17,17 @@ jobs:
           channel: stable
       - name: Install dependencies
         run: flutter pub get
+      # Runs `dart analyze` + a `dart format` check and surfaces findings as
+      # GitHub annotations (run summary + inline on the PR). fail-on-infos/
+      # warnings keep the strictness of the old `flutter analyze` gate;
+      # line-length matches the repo's configured page_width (120). Pinned to a
+      # commit SHA for supply-chain safety.
       - name: Analyze
-        run: flutter analyze
+        uses: zgosalvez/github-actions-analyze-dart@5ca39053dd1eba33fa2c6191215a6f1642a4575e # v3
+        with:
+          fail-on-infos: true
+          fail-on-warnings: true
+          line-length: 120
       - name: Test with coverage
         run: |
           set -e
