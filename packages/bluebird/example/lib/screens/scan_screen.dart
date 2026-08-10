@@ -20,13 +20,20 @@ class _ScanScreenState extends State<ScanScreen> {
   List<ScanResult> _scanResults = [];
   bool _isScanning = false;
 
-  /// The active scan; cancelling it stops scanning.
-  StreamSubscription<List<ScanResult>>? _scanSubscription;
+  late StreamSubscription<List<ScanResult>> _scanResultsSubscription;
   late StreamSubscription<bool> _isScanningSubscription;
 
   @override
   void initState() {
     super.initState();
+
+    // mirror the managed scan's result list into local state
+    _scanResultsSubscription = Bluebird.scanResults.listen((results) {
+      _scanResults = results;
+      if (mounted) {
+        setState(() {});
+      }
+    });
 
     _isScanningSubscription = Bluebird.isScanning.listen((state) {
       _isScanning = state;
@@ -38,26 +45,20 @@ class _ScanScreenState extends State<ScanScreen> {
 
   @override
   void dispose() {
-    _scanSubscription?.cancel();
+    _scanResultsSubscription.cancel();
     _isScanningSubscription.cancel();
     super.dispose();
   }
 
-  /// Starts a scan for [timeout], accumulating results into [_scanResults].
-  /// The scan stops itself when [timeout] elapses (or when the subscription is
-  /// cancelled by [onStopPressed] / [dispose]).
-  void _startScan({Duration timeout = const Duration(seconds: 15)}) {
-    _scanSubscription?.cancel();
-    _scanResults = [];
-    _scanSubscription = Bluebird.performScan(timeout: timeout).accumulate().listen(
-      (results) {
-        _scanResults = results;
-        if (mounted) setState(() {});
-      },
-      onError: (e) {
-        Snackbar.show(prettyException("Scan Error:", e), success: false);
-      },
-    );
+  /// Starts a managed scan that stops itself after [timeout], or via
+  /// [onStopPressed].
+  Future<void> _startScan({Duration timeout = const Duration(seconds: 15)}) async {
+    try {
+      await Bluebird.startScan(timeout: timeout);
+    } catch (e) {
+      Snackbar.show(prettyException("Start Scan Error:", e), success: false);
+      print(e);
+    }
   }
 
   Future onScanPressed() async {
@@ -69,12 +70,7 @@ class _ScanScreenState extends State<ScanScreen> {
       Snackbar.show(prettyException("System Devices Error:", e), success: false);
       print(e);
     }
-    try {
-      _startScan();
-    } catch (e) {
-      Snackbar.show(prettyException("Start Scan Error:", e), success: false);
-      print(e);
-    }
+    await _startScan();
     if (mounted) {
       setState(() {});
     }
@@ -82,7 +78,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Future onStopPressed() async {
     try {
-      await _scanSubscription?.cancel();
+      await Bluebird.stopScan();
     } catch (e) {
       Snackbar.show(prettyException("Stop Scan Error:", e), success: false);
       print(e);
