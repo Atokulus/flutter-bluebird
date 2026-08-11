@@ -203,10 +203,7 @@ final class BluebirdWeb extends BluebirdPlatform {
 
     // Fall back to emitting the disconnected state ourselves if the browser
     // never delivers the event, so callers are never left hanging.
-    await completer.future.timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => _handleDisconnected(address),
-    );
+    await completer.future.timeout(const Duration(seconds: 5), onTimeout: () => _handleDisconnected(address));
   }
 
   @override
