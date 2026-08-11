@@ -1,6 +1,6 @@
 name: bluebird
 description: A Bluetooth Low Energy (BLE) plugin for Flutter — scan, connect, and read/write GATT on Android, iOS, macOS, and Web.
-version: 0.4.1
+version: 0.4.2
 homepage: https://github.com/nebkat/flutter-bluebird
 repository: https://github.com/nebkat/flutter-bluebird
 issue_tracker: https://github.com/nebkat/flutter-bluebird/issues
@@ -21,7 +21,7 @@ dependencies:
   bluebird_platform_interface: ^0.4.0
   bluebird_android: ^0.4.1
   bluebird_darwin: ^0.4.0
-  bluebird_web: ^0.4.0
+  bluebird_web: ^0.4.1
   logging: ^1.3.0
 
 dev_dependencies:

@@ -1,3 +1,7 @@
+## 0.4.2
+
+- Fixed (Web) a spurious `deviceDisconnected` when a device is disconnected and quickly reconnected: a delayed `gattserverdisconnected` event from the previous connection could tear down the new one. Requires `bluebird_web` 0.4.1.
+
 ## 0.4.1
 
 - Fixed (Android) `AdvertisementData.manufacturerData` when an advertisement carries more than one manufacturer specific data structure. Each structure is now keyed by its own company id, instead of being merged into a single blob under the first company id (which leaked later structures' ids into the earlier payload). Requires `bluebird_android` 0.4.1.
