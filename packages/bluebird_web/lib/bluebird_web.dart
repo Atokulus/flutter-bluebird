@@ -65,6 +65,12 @@ final class BluebirdWeb extends BluebirdPlatform {
   /// used to label incoming notifications. Keyed by identity via a wrapper.
   final _charRefs = <BluetoothRemoteGATTCharacteristic, BmCharacteristicRef>{};
 
+  /// Programmatic disconnects awaiting the browser's asynchronous
+  /// `gattserverdisconnected` event, keyed by address. [disconnect] does not
+  /// return until the corresponding event has been handled, so a delayed event
+  /// can never straggle past a subsequent reconnect.
+  final _pendingDisconnects = <String, Completer<void>>{};
+
   late final _characteristicValueChangedListener = _handleCharacteristicValueChanged.toJS;
   late final _gattServerDisconnectedListener = _handleGattServerDisconnected.toJS;
 
@@ -177,11 +183,30 @@ final class BluebirdWeb extends BluebirdPlatform {
   @override
   Future<void> disconnect(String address) async {
     final gatt = _gattForDevice(address);
+
+    // Web Bluetooth dispatches `gattserverdisconnected` asynchronously (on a
+    // later task) in response to `disconnect()`. We treat that event as the
+    // single source of truth for the disconnected state and don't return until
+    // it has been handled — this guarantees a delayed event can't straggle past
+    // a subsequent rapid reconnect and tear the new connection down.
+    //
+    // The event only fires if the GATT server was actually connected; if it
+    // isn't, there is nothing to await, so emit the disconnected state directly.
+    if (!gatt.connected) {
+      _handleDisconnected(address);
+      return;
+    }
+
+    final completer = Completer<void>();
+    _pendingDisconnects[address] = completer;
     gatt.disconnect();
 
-    _clearDeviceCache(address);
-
-    _events.add(BmConnectionStateEvent(address: address, connectionState: BluetoothConnectionState.disconnected));
+    // Fall back to emitting the disconnected state ourselves if the browser
+    // never delivers the event, so callers are never left hanging.
+    await completer.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => _handleDisconnected(address),
+    );
   }
 
   @override
@@ -374,11 +399,20 @@ final class BluebirdWeb extends BluebirdPlatform {
 
   void _handleGattServerDisconnected(Event event) {
     final device = event.target as BluetoothDevice;
-    final address = device.address;
+    _handleDisconnected(device.address);
+  }
 
+  /// Applies the disconnected state for [address]: drops the attribute cache,
+  /// emits the connection-state event, and completes any [disconnect] that is
+  /// waiting on the browser's `gattserverdisconnected` event. This is the sole
+  /// emitter of the disconnected state, so it fires exactly once per teardown
+  /// whether the disconnect was programmatic or spontaneous.
+  void _handleDisconnected(String address) {
     _clearDeviceCache(address);
 
     _events.add(BmConnectionStateEvent(address: address, connectionState: BluetoothConnectionState.disconnected));
+
+    _pendingDisconnects.remove(address)?.complete();
   }
 
   void _clearDeviceCache(String address) {
