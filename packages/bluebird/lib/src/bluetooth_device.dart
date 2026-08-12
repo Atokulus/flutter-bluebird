@@ -24,6 +24,21 @@ const int _mtuMax = 517;
 class BluetoothDevice implements BluebirdLoggable {
   final String remoteId;
 
+  final Mutex _operations = Mutex();
+  final Mutex _disconnectOperations = Mutex();
+
+  Mutex get _operationMutex {
+    Bluebird.markDeviceOperationStarted();
+    return Bluebird.operationQueueMode == OperationQueueMode.global ? Mutex.global : _operations;
+  }
+
+  Mutex get _disconnectMutex {
+    Bluebird.markDeviceOperationStarted();
+    return Bluebird.operationQueueMode == OperationQueueMode.global ? Mutex.disconnect : _disconnectOperations;
+  }
+
+  bool get _serializePlatformCall => Bluebird.operationQueueMode == OperationQueueMode.global;
+
   @override
   String get logPath => "[$remoteId]";
 
@@ -84,7 +99,7 @@ class BluetoothDevice implements BluebirdLoggable {
   }
 
   /// [Bluebird.invoke] plus the device-scoped guards — connected pre-check,
-  /// global serialization, disconnection watchdog — stating [name] once.
+  /// per-device serialization, disconnection watchdog — stating [name] once.
   ///   - [before] runs inside the serialization mutex, before the call.
   @internal
   Future<T> invoke<T>(
@@ -95,16 +110,22 @@ class BluetoothDevice implements BluebirdLoggable {
     bool serialized = true,
     Future<void> Function()? before,
   }) {
+    Bluebird.markDeviceOperationStarted();
     if (requiresConnection) ensureConnected(name);
     Future<T> run() async {
       if (before != null) await before();
-      var future = Bluebird.invoke(name, call, ensureAdapterIsOn: true);
+      var future = Bluebird.invoke(
+        name,
+        call,
+        ensureAdapterIsOn: true,
+        serializePlatformCall: _serializePlatformCall,
+      );
       if (requiresConnection) future = future.bluebirdEnsureDeviceIsConnected(this, name);
       if (timeout != null) future = future.bluebirdTimeout(timeout, name);
       return future;
     }
 
-    return serialized ? Mutex.global.protect(run) : run();
+    return serialized ? _operationMutex.protect(run) : run();
   }
 
   /// Register a subscription to be canceled when the device is disconnected.
@@ -140,14 +161,16 @@ class BluetoothDevice implements BluebirdLoggable {
   ///   [mtu] Android only. Request a larger mtu right after connection, if set.
   Future<void> connect({Duration timeout = const Duration(seconds: 35), int? mtu = _mtuMax}) async {
     // make sure no one else is calling disconnect
-    await Mutex.disconnect.take();
+    final disconnectMutex = _disconnectMutex;
+    final operationMutex = _operationMutex;
+    await disconnectMutex.take();
     bool disconnectReturned = false;
 
     // enter the `connecting` state up front (the platforms don't report it)
     _emitConnectionState(BluetoothConnectionState.connecting);
 
     try {
-      await Mutex.global.protect(() async {
+      await operationMutex.protect(() async {
         // record connection time
         if (System.isAndroid) _connectTimestamp = DateTime.now();
 
@@ -157,11 +180,12 @@ class BluetoothDevice implements BluebirdLoggable {
             (p) => p.connect(remoteId),
             ensureAdapterIsOn: true,
             timeout: timeout,
+            serializePlatformCall: _serializePlatformCall,
           );
 
           // we return the disconnect mutex now so that this
           // connection attempt can be canceled by calling disconnect
-          Mutex.disconnect.give();
+          disconnectMutex.give();
           disconnectReturned = true;
 
           await future;
@@ -172,7 +196,11 @@ class BluetoothDevice implements BluebirdLoggable {
           _connectionState = BluetoothConnectionState.connected;
         } on BluebirdException catch (e) {
           if (e.code == BluebirdErrorCode.timeout) {
-            await Bluebird.invoke("disconnect", (p) => p.disconnect(remoteId));
+            await Bluebird.invoke(
+              "disconnect",
+              (p) => p.disconnect(remoteId),
+              serializePlatformCall: _serializePlatformCall,
+            );
           }
           rethrow;
         }
@@ -187,7 +215,7 @@ class BluetoothDevice implements BluebirdLoggable {
       rethrow;
     }
 
-    if (!disconnectReturned) Mutex.disconnect.give();
+    if (!disconnectReturned) disconnectMutex.give();
 
     // request larger mtu
     if (System.isAndroid && isConnected && mtu != null) {
@@ -211,7 +239,9 @@ class BluetoothDevice implements BluebirdLoggable {
     Duration androidDelay = const Duration(seconds: 2),
   }) async {
     // Only allow a single disconnect operation at a time
-    await Mutex.disconnect.protect(() {
+    final disconnectMutex = _disconnectMutex;
+    final operationMutex = _operationMutex;
+    await disconnectMutex.protect(() {
       Future<void> action() async {
         // enter the `disconnecting` state (the platforms don't report it); the
         // native `disconnected` event follows and moves us to disconnected
@@ -223,7 +253,13 @@ class BluetoothDevice implements BluebirdLoggable {
         await _ensureAndroidDisconnectionDelay(androidDelay);
 
         // invoke
-        await Bluebird.invoke("disconnect", (p) => p.disconnect(remoteId), ensureAdapterIsOn: true, timeout: timeout);
+        await Bluebird.invoke(
+          "disconnect",
+          (p) => p.disconnect(remoteId),
+          ensureAdapterIsOn: true,
+          timeout: timeout,
+          serializePlatformCall: _serializePlatformCall,
+        );
 
         if (System.isAndroid) {
           // Disconnected, remove connect timestamp
@@ -231,7 +267,7 @@ class BluetoothDevice implements BluebirdLoggable {
         }
       }
 
-      return queue ? Mutex.global.protect(action) : action();
+      return queue ? operationMutex.protect(action) : action();
     });
   }
 

@@ -57,6 +57,9 @@ class Bluebird {
   /// Bluebird log level
   static LogLevel _logLevel = LogLevel.debug;
 
+  static OperationQueueMode _operationQueueMode = OperationQueueMode.global;
+  static bool _deviceOperationsStarted = false;
+
   /// Resets all global state and re-subscribes to the current platform on the
   /// next call. For tests only.
   @visibleForTesting
@@ -70,6 +73,8 @@ class Bluebird {
     _scanAccumSub = null;
     _scanList = const [];
     _logLevel = LogLevel.debug;
+    _operationQueueMode = OperationQueueMode.global;
+    _deviceOperationsStarted = false;
     _loggerPrintSub?.cancel();
     _loggerPrintSub = null;
     _initialized = false;
@@ -81,6 +86,28 @@ class Bluebird {
 
   /// The current platform log verbosity (see [setPlatformLogLevel]).
   static LogLevel get platformLogLevel => _logLevel;
+
+  /// How GATT operations are queued across connected devices.
+  static OperationQueueMode get operationQueueMode => _operationQueueMode;
+
+  /// Configures whether GATT operations use one process-wide queue or one
+  /// independent queue per device.
+  ///
+  /// Call this before starting any device operation. Per-device queueing lets
+  /// separate peripherals connect, discover, read, and write concurrently,
+  /// while preserving operation ordering for each individual peripheral.
+  static void setOperationQueueMode(OperationQueueMode mode) {
+    if (mode == _operationQueueMode) return;
+    if (_deviceOperationsStarted) {
+      throw StateError('setOperationQueueMode must be called before starting device operations');
+    }
+    _operationQueueMode = mode;
+  }
+
+  @internal
+  static void markDeviceOperationStarted() {
+    _deviceOperationsStarted = true;
+  }
 
   /// Checks whether the hardware supports Bluetooth
   static Future<bool> get isSupported async => await invoke("isSupported", (p) => p.isSupported());
@@ -576,9 +603,9 @@ class Bluebird {
     Future<T> Function(BluebirdPlatform p) call, {
     Duration? timeout,
     bool ensureAdapterIsOn = false,
+    bool serializePlatformCall = true,
   }) {
-    // Only allow 1 invocation at a time (guarantees that hot restart finishes)
-    var future = Mutex.platform.protect(() async {
+    Future<T> run() async {
       _initBluebird();
       try {
         return await call(BluebirdPlatform.instance);
@@ -589,7 +616,11 @@ class Bluebird {
         }
         throw BluebirdException(e.code, code, e.message, e.details);
       }
-    });
+    }
+
+    // Federated backends protect their hot-restart handshake. The legacy mode
+    // additionally serializes all platform calls for backwards compatibility.
+    var future = serializePlatformCall ? Mutex.platform.protect(run) : run();
     if (ensureAdapterIsOn) future = future.bluebirdEnsureAdapterIsOn(name);
     if (timeout != null) future = future.bluebirdTimeout(timeout, name);
     return future;
@@ -602,6 +633,15 @@ class Bluebird {
   @internal
   static Stream<T> extractEventStream<T extends BluebirdEvent>([bool Function(T event)? test]) =>
       _eventStream.stream.where((e) => e is T).cast<T>().where(test ?? (_) => true);
+}
+
+/// Controls how Bluebird serializes operations involving a peripheral.
+enum OperationQueueMode {
+  /// Preserve the historical behavior: one operation at a time globally.
+  global,
+
+  /// Serialize each device independently, allowing cross-device concurrency.
+  perDevice,
 }
 
 enum AndroidScanMode {

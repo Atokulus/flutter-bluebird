@@ -1,3 +1,8 @@
+## Unreleased
+
+- Add configurable per-device operation queues for concurrent multi-device BLE
+  connections while retaining global queueing as the default.
+
 ## 0.4.2
 
 - Fixed (Web) a spurious `deviceDisconnected` when a device is disconnected and quickly reconnected: a delayed `gattserverdisconnected` event from the previous connection could tear down the new one. Requires `bluebird_web` 0.4.2.

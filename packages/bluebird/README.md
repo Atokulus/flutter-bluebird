@@ -70,6 +70,19 @@ await device.connect();
 await device.disconnect();
 ```
 
+### Connect to multiple devices concurrently
+
+By default Bluebird preserves its historical process-wide operation queue. Apps
+that communicate with multiple peripherals should enable independent per-device
+queues before starting any Bluetooth device operation:
+
+```dart
+Bluebird.setOperationQueueMode(OperationQueueMode.perDevice);
+```
+
+Operations remain ordered within each device, while connections, discovery,
+reads, and writes for separate devices can proceed concurrently.
+
 ### Discover services, characteristics & descriptors
 
 ```dart
@@ -1046,7 +1059,6 @@ If you just added bluebird to your pubspec.yaml, a hot reload / hot restart is n
 You need to fully stop your app and run again so that the native plugins are loaded.
 
 Also try `flutter clean`.
-
 
 
 
