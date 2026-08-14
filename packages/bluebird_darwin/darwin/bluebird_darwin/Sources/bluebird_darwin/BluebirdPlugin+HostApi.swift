@@ -345,12 +345,10 @@ extension BluebirdPlugin: BluebirdHostApi {
           peripheral.writeValue(value.data, for: chr, type: .withResponse)
         }
       } else {
-        // Writes without response are unacknowledged. CoreBluetooth throttles
-        // them via canSendWriteWithoutResponse; wait until the peripheral can
-        // accept another (backpressure) rather than dropping the write, then
-        // enqueue and complete immediately — there is no response to await.
-        try await awaitWriteReady(state)
-        peripheral.writeValue(value.data, for: chr, type: .withoutResponse)
+        // Queue write commands natively. The queue drains multiple frames at
+        // once while CoreBluetooth has capacity and pauses on its documented
+        // canSendWriteWithoutResponse backpressure signal.
+        try await enqueueWriteWithoutResponse(state, data: value.data, characteristic: chr)
       }
     }
   }

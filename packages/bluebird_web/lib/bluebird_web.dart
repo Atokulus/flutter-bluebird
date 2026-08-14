@@ -71,6 +71,11 @@ final class BluebirdWeb extends BluebirdPlatform {
   /// can never straggle past a subsequent reconnect.
   final _pendingDisconnects = <String, Completer<void>>{};
 
+  /// Browser GATT implementations allow only one operation at a time. Keep a
+  /// per-device command chain so an entire Dart burst is already queued here
+  /// and each promise can start the next write without a Flutter round trip.
+  final _writeCommandTails = <String, Future<void>>{};
+
   late final _characteristicValueChangedListener = _handleCharacteristicValueChanged.toJS;
   late final _gattServerDisconnectedListener = _handleGattServerDisconnected.toJS;
 
@@ -321,7 +326,19 @@ final class BluebirdWeb extends BluebirdPlatform {
     if (writeType == BmWriteType.withResponse) {
       await jsChar.writeValueWithResponse(value.toJS).toDart;
     } else {
-      await jsChar.writeValueWithoutResponse(value.toJS).toDart;
+      final previous = _writeCommandTails[address] ?? Future<void>.value();
+      final operation = previous.then(
+        (_) => jsChar.writeValueWithoutResponse(value.toJS).toDart,
+        onError: (_, _) => jsChar.writeValueWithoutResponse(value.toJS).toDart,
+      );
+      final tail = operation.then<void>((_) {}, onError: (_, _) {});
+      _writeCommandTails[address] = tail;
+      tail.then((_) {
+        if (identical(_writeCommandTails[address], tail)) {
+          _writeCommandTails.remove(address);
+        }
+      });
+      await operation;
     }
   }
 

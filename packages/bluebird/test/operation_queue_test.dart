@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:bluebird/bluebird.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_platform.dart';
+import 'protos.dart';
 
 void main() {
   late BluetoothDevice firstDevice;
@@ -124,12 +126,70 @@ void main() {
     expect(secondStarted.isCompleted, isTrue);
   });
 
+  test('per-device mode pipelines write-without-response calls on one device', () async {
+    final releases = <Completer<void>>[];
+    final started = <Completer<void>>[];
+    final platform = FakePlatform()
+      ..services = [
+        bmService('1800', characteristics: [bmChar('2a00', properties: props(writeWithoutResponse: true))]),
+      ]
+      ..stubs['writeCharacteristic'] = () {
+        final release = Completer<void>();
+        releases.add(release);
+        started.add(Completer<void>()..complete());
+        return release.future;
+      };
+    FakePlatform.install(platform);
+    firstDevice = Bluebird.deviceForAddress('AA:BB:CC:DD:EE:01');
+    Bluebird.setOperationQueueMode(OperationQueueMode.perDevice);
+    await firstDevice.connect(mtu: null);
+    final characteristic = (await firstDevice.discoverServices()).single.characteristics.single;
+
+    final first = characteristic.write([1], withoutResponse: true);
+    await pumpEventQueue();
+    final second = characteristic.write([2], withoutResponse: true);
+    await pumpEventQueue();
+
+    expect(started, hasLength(2));
+    releases[0].complete();
+    releases[1].complete();
+    await Future.wait([first, second]);
+  });
+
+  test('response-bearing operation waits for a write-without-response burst', () async {
+    final writeRelease = Completer<void>();
+    final readStarted = Completer<void>();
+    final platform = FakePlatform()
+      ..services = [
+        bmService('1800', characteristics: [bmChar('2a00', properties: props(read: true, writeWithoutResponse: true))]),
+      ]
+      ..stubs['writeCharacteristic'] = () {
+        return writeRelease.future;
+      }
+      ..stubs['readCharacteristic'] = () {
+        readStarted.complete();
+        return Uint8List(0);
+      };
+    FakePlatform.install(platform);
+    firstDevice = Bluebird.deviceForAddress('AA:BB:CC:DD:EE:01');
+    Bluebird.setOperationQueueMode(OperationQueueMode.perDevice);
+    await firstDevice.connect(mtu: null);
+    final characteristic = (await firstDevice.discoverServices()).single.characteristics.single;
+
+    final write = characteristic.write([1], withoutResponse: true);
+    await pumpEventQueue();
+    final read = characteristic.read();
+    await pumpEventQueue();
+    expect(readStarted.isCompleted, isFalse);
+
+    writeRelease.complete();
+    await Future.wait([write, read]);
+    expect(readStarted.isCompleted, isTrue);
+  });
+
   test('queue mode cannot change after device operations begin', () async {
     await firstDevice.connect(mtu: null);
 
-    expect(
-      () => Bluebird.setOperationQueueMode(OperationQueueMode.perDevice),
-      throwsStateError,
-    );
+    expect(() => Bluebird.setOperationQueueMode(OperationQueueMode.perDevice), throwsStateError);
   });
 }

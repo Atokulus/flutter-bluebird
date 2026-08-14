@@ -206,6 +206,10 @@ class BluetoothCharacteristic extends BluetoothAttribute {
       "writeCharacteristic",
       (p) => p.writeCharacteristic(device.remoteId, bm, writeType, allowLongWrite, Uint8List.fromList(value)),
       timeout: timeout,
+      // Write commands have no ATT response. Let consecutive commands enter
+      // the platform together; each backend owns ordering and flow control.
+      // Operations that need a response wait for this burst to drain.
+      concurrentWrite: withoutResponse,
     );
   }
 

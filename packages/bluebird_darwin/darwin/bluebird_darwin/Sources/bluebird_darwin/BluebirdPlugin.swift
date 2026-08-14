@@ -259,28 +259,32 @@ public class BluebirdPlugin: NSObject, FlutterPlugin {
     }
   }
 
-  /// Suspends until CoreBluetooth can accept another write-without-response,
-  /// resumed by `peripheralIsReady(toSendWriteWithoutResponse:)`. Returns
-  /// immediately when the peripheral is already ready — the common case.
-  ///
-  /// Unacknowledged writes carry no ATT response, so this readiness signal is
-  /// the only backpressure CoreBluetooth exposes; awaiting it gives the Dart
-  /// `write(withoutResponse: true)` future the same "resolves once the stack
-  /// accepted the bytes" meaning it already has on Android and Web. The Dart
-  /// layer serializes writes, so at most one is ever parked; a second arrival
-  /// throws operation_in_progress, mirroring the GATT slot.
+  /// Enqueues a write command and completes once CoreBluetooth accepts it.
+  /// Consecutive calls are drained synchronously while buffer capacity remains,
+  /// which lets CoreBluetooth schedule several frames in one connection event.
   @MainActor
-  func awaitWriteReady(_ state: PeripheralState) async throws {
-    // No suspension point between this check and installing the continuation,
-    // so on the single-threaded main actor readiness cannot flip in between.
-    if state.peripheral.canSendWriteWithoutResponse { return }
+  func enqueueWriteWithoutResponse(
+    _ state: PeripheralState, data: Data, characteristic: CBCharacteristic
+  ) async throws {
     try await withCheckedThrowingContinuation {
       (continuation: CheckedContinuation<Void, Error>) in
-      guard state.pendingWriteReady == nil else {
-        continuation.resume(throwing: operationInProgressError())
-        return
-      }
-      state.pendingWriteReady = continuation
+      state.pendingWritesWithoutResponse.append(
+        PendingWriteWithoutResponse(
+          data: data, characteristic: characteristic, continuation: continuation))
+      drainWritesWithoutResponse(state)
+    }
+  }
+
+  /// Drains as much of the FIFO as CoreBluetooth currently accepts. The
+  /// delegate calls this again when a full buffer becomes writable.
+  func drainWritesWithoutResponse(_ state: PeripheralState) {
+    while !state.pendingWritesWithoutResponse.isEmpty,
+      state.peripheral.canSendWriteWithoutResponse
+    {
+      let write = state.pendingWritesWithoutResponse.removeFirst()
+      state.peripheral.writeValue(
+        write.data, for: write.characteristic, type: .withoutResponse)
+      write.continuation.resume()
     }
   }
 

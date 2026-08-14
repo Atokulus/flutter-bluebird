@@ -1,3 +1,8 @@
+## Unreleased
+
+- Queue write-without-response promises per device so callers can submit a
+  burst without waiting for a Dart/platform round trip between frames.
+
 ## 0.4.2
 
 - Fixed a spurious `deviceDisconnected` when a device is disconnected and quickly reconnected. The browser dispatches `gattserverdisconnected` asynchronously in response to `disconnect()`, so the delayed event could land on the freshly re-established connection, wipe its attribute cache, and drive it back to `disconnected`. `disconnect()` now treats that event as the single source of truth and waits for it to be handled before returning, so the straggler is consumed before any reconnect begins.

@@ -83,6 +83,15 @@ Bluebird.setOperationQueueMode(OperationQueueMode.perDevice);
 Operations remain ordered within each device, while connections, discovery,
 reads, and writes for separate devices can proceed concurrently.
 
+In per-device mode, consecutive `write(..., withoutResponse: true)` calls may
+also be submitted without awaiting each one. Bluebird pipelines that burst in
+call order and applies the platform's native flow control, while any following
+response-bearing GATT operation waits for the burst:
+
+```dart
+await Future.wait(frames.map((frame) => characteristic.write(frame, withoutResponse: true)));
+```
+
 ### Discover services, characteristics & descriptors
 
 ```dart
@@ -1059,7 +1068,6 @@ If you just added bluebird to your pubspec.yaml, a hot reload / hot restart is n
 You need to fully stop your app and run again so that the native plugins are loaded.
 
 Also try `flutter clean`.
-
 
 
 

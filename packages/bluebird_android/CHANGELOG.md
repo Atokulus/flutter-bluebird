@@ -1,3 +1,8 @@
+## Unreleased
+
+- Queue concurrent write commands per connection inside the native plugin and
+  advance the queue from Android's buffer-capacity callbacks.
+
 ## 0.4.1
 
 - Fixed manufacturer specific data parsing when an advertisement carries more than one Manufacturer Specific Data (AD type `0xFF`) structure. Each structure is now attributed to its own company id; previously every structure was concatenated into one blob keyed by the first company id, so a later structure's company id leaked into the earlier structure's payload (e.g. a device advertising `0x0000` then `0x08FA` surfaced as `{ 0x0000: [.. FA 08 ..] }` instead of two separate entries). Multiple structures sharing a company id are still concatenated.

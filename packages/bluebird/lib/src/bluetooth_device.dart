@@ -26,6 +26,7 @@ class BluetoothDevice implements BluebirdLoggable {
 
   final Mutex _operations = Mutex();
   final Mutex _disconnectOperations = Mutex();
+  final Set<Future<void>> _concurrentWrites = {};
 
   Mutex get _operationMutex {
     Bluebird.markDeviceOperationStarted();
@@ -108,24 +109,43 @@ class BluetoothDevice implements BluebirdLoggable {
     Duration? timeout,
     bool requiresConnection = true,
     bool serialized = true,
+    bool concurrentWrite = false,
     Future<void> Function()? before,
   }) {
     Bluebird.markDeviceOperationStarted();
     if (requiresConnection) ensureConnected(name);
     Future<T> run() async {
       if (before != null) await before();
-      var future = Bluebird.invoke(
-        name,
-        call,
-        ensureAdapterIsOn: true,
-        serializePlatformCall: _serializePlatformCall,
-      );
+      var future = Bluebird.invoke(name, call, ensureAdapterIsOn: true, serializePlatformCall: _serializePlatformCall);
       if (requiresConnection) future = future.bluebirdEnsureDeviceIsConnected(this, name);
       if (timeout != null) future = future.bluebirdTimeout(timeout, name);
       return future;
     }
 
-    return serialized ? _operationMutex.protect(run) : run();
+    if (!serialized) return run();
+
+    final operationMutex = _operationMutex;
+    if (concurrentWrite && Bluebird.operationQueueMode == OperationQueueMode.perDevice) {
+      Future<T> startConcurrentWrite() async {
+        late Future<T> operation;
+        await operationMutex.protect(() {
+          operation = run();
+          final tracked = operation.then<void>((_) {}, onError: (_, _) {});
+          _concurrentWrites.add(tracked);
+          tracked.then((_) => _concurrentWrites.remove(tracked));
+        });
+        return operation;
+      }
+
+      return startConcurrentWrite();
+    }
+
+    return operationMutex.protect(() async {
+      if (_concurrentWrites.isNotEmpty) {
+        await Future.wait(_concurrentWrites.toList(growable: false));
+      }
+      return run();
+    });
   }
 
   /// Register a subscription to be canceled when the device is disconnected.

@@ -1,3 +1,9 @@
+## Unreleased
+
+- Drain queued write commands until CoreBluetooth reports
+  `canSendWriteWithoutResponse == false`, then continue from its readiness
+  callback. This allows several frames per connection event without drops.
+
 ## 0.4.0
 
 - Added L2CAP connection-oriented channel support (CoreBluetooth `openL2CAPChannel`).

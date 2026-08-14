@@ -41,6 +41,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class BluebirdPlugin :
@@ -783,9 +784,23 @@ class BluebirdPlugin :
             "data longer than allowed. value.length: ${value.size} > max: $maxLen ($a$b)"
         }
 
-        // completes via onCharacteristicWrite
-        registry.awaitGatt<Unit>(conn, GattOp.WriteChar(chr)) {
-            gatt.writeCharacteristicCompat(chr, value, writeTypeInt)
+        suspend fun writeAndAwaitBufferSpace() {
+            // Android reports write-command progress through
+            // onCharacteristicWrite. Its callback is immediate while the
+            // controller buffer has room and delayed when it is full, making
+            // it the platform's write-without-response backpressure signal.
+            registry.awaitGatt<Unit>(conn, GattOp.WriteChar(chr)) {
+                gatt.writeCharacteristicCompat(chr, value, writeTypeInt)
+            }
+        }
+
+        if (writeType == BmWriteType.WITHOUT_RESPONSE) {
+            // Several Pigeon calls may now be resident here concurrently. Feed
+            // them through the one Android GATT slot in FIFO order, entirely
+            // natively, so each callback can start the next frame immediately.
+            conn.writeWithoutResponseMutex.withLock { writeAndAwaitBufferSpace() }
+        } else {
+            writeAndAwaitBufferSpace()
         }
     }
 

@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
 
 /** Error for starting a second operation of a concurrency class while one is in flight. */
 internal fun operationInProgress() = FlutterError(
@@ -105,6 +106,12 @@ class DeviceConnection(
     var pendingDisconnect: CancellableContinuation<Unit>? = null
     var pendingGatt: PendingGatt? = null
     var pendingBond: CancellableContinuation<Boolean>? = null
+
+    /**
+     * Accepts a burst of write commands from Dart and feeds them into Android's
+     * single per-connection GATT slot without another Flutter round trip.
+     */
+    val writeWithoutResponseMutex = Mutex()
 
     /**
      * Fails the gatt & bond slots, e.g. when the device disconnects.

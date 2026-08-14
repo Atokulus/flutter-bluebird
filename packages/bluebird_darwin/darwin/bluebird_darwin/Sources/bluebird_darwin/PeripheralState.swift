@@ -34,6 +34,14 @@ struct PendingGatt {
   let continuation: CheckedContinuation<Any?, Error>
 }
 
+/// One queued ATT Write Command. CoreBluetooth provides no per-command
+/// callback, so completion means that the bytes were accepted by its buffer.
+struct PendingWriteWithoutResponse {
+  let data: Data
+  let characteristic: CBCharacteristic
+  let continuation: CheckedContinuation<Void, Error>
+}
+
 /// Per-device state for a peripheral we are connecting to or connected to.
 /// Mirrors the Android side's DeviceConnection.
 final class PeripheralState {
@@ -60,12 +68,9 @@ final class PeripheralState {
   var pendingDisconnect: CheckedContinuation<Void, Error>?
   var pendingGatt: PendingGatt?
 
-  /// A write-without-response blocked on CoreBluetooth's flow control
-  /// (`canSendWriteWithoutResponse` is false), waiting to be resumed by
-  /// `peripheralIsReady(toSendWriteWithoutResponse:)`. Unacknowledged writes
-  /// don't occupy the GATT slot, so this is separate; the Dart layer
-  /// serializes writes, so at most one is ever parked here.
-  var pendingWriteReady: CheckedContinuation<Void, Error>?
+  /// Pending write commands. They are drained in order until CoreBluetooth's
+  /// per-peripheral buffer applies backpressure.
+  var pendingWritesWithoutResponse: [PendingWriteWithoutResponse] = []
 
   /// An in-flight `openL2capChannel`, resumed by `peripheral(_:didOpen:error:)`.
   /// The Dart layer serializes operations, so at most one is ever parked here.
@@ -99,12 +104,6 @@ final class PeripheralState {
     return pendingDisconnect
   }
 
-  /// Removes and returns the write-ready continuation, if any.
-  func takeWriteReady() -> CheckedContinuation<Void, Error>? {
-    defer { pendingWriteReady = nil }
-    return pendingWriteReady
-  }
-
   /// Removes and returns the L2CAP-open continuation, if any.
   func takeL2capOpen() -> CheckedContinuation<CBL2CAPChannel, Error>? {
     defer { pendingL2capOpen = nil }
@@ -117,7 +116,9 @@ final class PeripheralState {
     takeGatt()?.continuation.resume(throwing: error)
     takeConnect()?.resume(throwing: error)
     takeDisconnect()?.resume(throwing: error)
-    takeWriteReady()?.resume(throwing: error)
+    let writes = pendingWritesWithoutResponse
+    pendingWritesWithoutResponse.removeAll(keepingCapacity: true)
+    for write in writes { write.continuation.resume(throwing: error) }
     takeL2capOpen()?.resume(throwing: error)
   }
 

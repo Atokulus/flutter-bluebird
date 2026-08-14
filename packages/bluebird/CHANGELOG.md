@@ -2,6 +2,9 @@
 
 - Add configurable per-device operation queues for concurrent multi-device BLE
   connections while retaining global queueing as the default.
+- Pipeline consecutive write-without-response calls in per-device mode. The
+  platform can now accept a complete burst without a Dart round trip between
+  frames; response-bearing operations still wait for the burst to drain.
 
 ## 0.4.2
 
