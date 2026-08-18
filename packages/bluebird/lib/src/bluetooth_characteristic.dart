@@ -183,7 +183,9 @@ class BluetoothCharacteristic extends BluetoothAttribute {
 
   /// Writes a characteristic.
   ///  - [withoutResponse]:
-  ///       If `true`, the write is not guaranteed and always returns immediately with success.
+  ///       If `true`, completes when the platform accepts the ATT write command.
+  ///       It may still report local submission/stack errors, but there is no
+  ///       remote ATT response proving that the peripheral processed the value.
   ///       If `false`, the write returns error on failure.
   ///  - [allowLongWrite]: if set, larger writes > MTU are allowed (up to 512 bytes).
   ///       This should be used with caution.

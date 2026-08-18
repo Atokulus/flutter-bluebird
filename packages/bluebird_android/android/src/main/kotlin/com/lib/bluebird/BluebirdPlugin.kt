@@ -1422,10 +1422,11 @@ class BluebirdPlugin :
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
-            // For "writeWithResponse", onCharacteristicWrite is called after the remote sends back a write response.
-            // For "writeWithoutResponse", onCharacteristicWrite is called as long as there is still space left
-            // in android's internal buffer. When the buffer is full, it delays calling onCharacteristicWrite
-            // until there is at least ~50% free space again.
+            // Android completes both write types through this callback. For a
+            // write request, completion includes the remote ATT response. For
+            // a write command, it is local stack completion only: the command
+            // deliberately has no remote ATT response and this callback cannot
+            // prove that the peripheral received or processed the value.
 
             completeGatt("onCharacteristicWrite: chr: ${Uuid(characteristic.uuid)}", gatt, status, Unit) {
                 it == GattOp.WriteChar(characteristic)
