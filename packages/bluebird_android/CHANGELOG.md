@@ -3,7 +3,8 @@
 - Fix successful CCCD writes being reported as `KotlinNothingValueException`,
   which immediately rolled back notification routing and broke discovery.
 - Queue concurrent write commands per connection inside the native plugin and
-  advance the queue from Android's buffer-capacity callbacks.
+  start the next queued operation directly from Android's buffer-capacity
+  callback, before completing the prior Flutter call.
 - Serialize every callback-bearing GATT operation through one native per-device
   FIFO, preventing PHY/MTU/CCCD/read/write callback-slot collisions while
   preserving native write-command pipelining.

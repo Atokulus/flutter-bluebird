@@ -784,8 +784,10 @@ class BluebirdPlugin :
         }
 
         // Several write-command Pigeon calls may already be resident here.
-        // awaitGatt feeds them through the per-device native FIFO, while the
-        // callback supplies Android's controller-buffer backpressure.
+        // awaitGatt queues them in the per-device native FIFO. The callback
+        // starts the next write directly before this call completes, supplying
+        // Android's controller-buffer backpressure without a Flutter or
+        // coroutine scheduling gap between frames.
         registry.awaitGatt<Unit>(conn, GattOp.WriteChar(chr)) {
             gatt.writeCharacteristicCompat(chr, value, writeTypeInt)
         }

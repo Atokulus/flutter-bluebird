@@ -85,8 +85,11 @@ reads, and writes for separate devices can proceed concurrently.
 
 In per-device mode, consecutive `write(..., withoutResponse: true)` calls may
 also be submitted without awaiting each one. Bluebird pipelines that burst in
-call order and applies the platform's native flow control, while any following
-response-bearing GATT operation waits for the burst:
+call order and applies the platform's native flow control. On Android, each
+GATT callback starts the next queued frame directly before completing the prior
+Flutter call, so this native pump applies equally to DFU data and ordinary
+multi-frame protocols. Any following response-bearing GATT operation waits for
+the burst:
 
 ```dart
 await Future.wait(frames.map((frame) => characteristic.write(frame, withoutResponse: true)));
@@ -1068,7 +1071,6 @@ If you just added bluebird to your pubspec.yaml, a hot reload / hot restart is n
 You need to fully stop your app and run again so that the native plugins are loaded.
 
 Also try `flutter clean`.
-
 
 
 

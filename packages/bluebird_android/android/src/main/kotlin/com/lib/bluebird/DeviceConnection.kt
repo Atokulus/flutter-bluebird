@@ -11,12 +11,11 @@ import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /** Error for starting a second operation of a concurrency class while one is in flight. */
 internal fun operationInProgress() = FlutterError(
@@ -68,8 +67,12 @@ sealed class GattOp {
     data object Phy : GattOp()
 }
 
-/** One in-flight GATT operation awaiting its BluetoothGattCallback. */
-class PendingGatt(val kind: GattOp, val cont: CancellableContinuation<Any?>)
+/** One GATT operation awaiting its turn or its [BluetoothGattCallback]. */
+class PendingGatt(
+    val kind: GattOp,
+    val cont: CancellableContinuation<Any?>,
+    val start: () -> Unit,
+)
 
 /**
  * Per-device connection state, replacing the Java plugin's cluster of
@@ -95,11 +98,9 @@ class DeviceConnection(
     val isConnecting: Boolean get() = state == State.CONNECTING
 
     // One continuation slot per concurrency class. Android allows only one
-    // in-flight GATT op per device (starting a second while one is pending
-    // returns false) and the Dart layer additionally serializes globally,
-    // so a single gatt slot suffices; `kind` is kept so callbacks can be
-    // matched (e.g. an unsolicited onMtuChanged must not resume a pending
-    // read).
+    // callback-bearing GATT op per device. `kind` lets callbacks reject
+    // unsolicited or stale events (for example, an unsolicited MTU change
+    // must not resume a pending read).
     //
     // All slots are mutated under the ConnectionRegistry's lock: callbacks
     // arrive on binder threads.
@@ -109,11 +110,13 @@ class DeviceConnection(
     var pendingBond: CancellableContinuation<Boolean>? = null
 
     /**
-     * Android exposes one callback-bearing GATT operation slot per connection.
-     * Keep every such operation in one native FIFO. This is also where bursts
-     * of write commands queue, avoiding a Flutter round trip between frames.
+     * Operations already received from Flutter, in call order. The GATT
+     * callback promotes and starts the head directly before completing the
+     * preceding Flutter call. For write commands this mirrors Nordic's DFU
+     * pump: Android's callback provides controller-buffer backpressure while
+     * the next frame avoids a coroutine and platform-channel round trip.
      */
-    val gattMutex = Mutex()
+    val queuedGatt = ArrayDeque<PendingGatt>()
 
     /**
      * Fails the gatt & bond slots, e.g. when the device disconnects.
@@ -122,6 +125,9 @@ class DeviceConnection(
      */
     fun failAllPending(error: FlutterError) {
         pendingGatt?.let { pendingGatt = null; it.cont.resumeWithException(error) }
+        while (queuedGatt.isNotEmpty()) {
+            queuedGatt.removeFirst().cont.resumeWithException(error)
+        }
         pendingBond?.let { pendingBond = null; it.resumeWithException(error) }
     }
 }
@@ -220,24 +226,80 @@ class ConnectionRegistry {
         }
     }
 
+    /** Starts [first], skipping and failing entries whose platform call throws. */
+    private fun startGattChain(conn: DeviceConnection, first: PendingGatt) {
+        var current: PendingGatt? = first
+        while (current != null) {
+            val operation = current
+            var next: PendingGatt? = null
+            val error = synchronized(stateLock) {
+                // A disconnect may fail and remove this operation between its
+                // promotion and this function running.
+                if (connections[conn.address] !== conn ||
+                    !conn.isConnected ||
+                    conn.pendingGatt !== operation
+                ) {
+                    return
+                }
+
+                try {
+                    operation.start()
+                    null
+                } catch (error: Throwable) {
+                    if (conn.pendingGatt === operation) {
+                        conn.pendingGatt = conn.queuedGatt.pollFirst()
+                        next = conn.pendingGatt
+                    }
+                    error
+                }
+            }
+            if (error == null) return
+
+            operation.cont.resumeWithException(error)
+            current = next
+        }
+    }
+
     /**
-     * Runs one callback-bearing GATT operation in the device's native FIFO and
-     * suspends until its callback resumes the slot. Re-check the connection
-     * after waiting: another queued operation may have observed a disconnect.
+     * Enqueues one callback-bearing GATT operation and suspends until its
+     * callback. Unlike a coroutine mutex, this explicit native FIFO lets the
+     * callback start the next queued operation synchronously.
      */
     @Suppress("UNCHECKED_CAST")
-    suspend fun <T> awaitGatt(conn: DeviceConnection, kind: GattOp, start: () -> Unit): T = conn.gattMutex.withLock {
-        val stillConnected = synchronized(stateLock) {
-            connections[conn.address] === conn && conn.isConnected
-        }
-        if (!stillConnected) throw notConnected()
+    suspend fun <T> awaitGatt(conn: DeviceConnection, kind: GattOp, start: () -> Unit): T =
+        suspendCancellableCoroutine<Any?> { cont ->
+            val operation = PendingGatt(kind, cont, start)
+            var startNow = false
+            val connected = synchronized(stateLock) {
+                if (connections[conn.address] !== conn || !conn.isConnected) {
+                    false
+                } else {
+                    if (conn.pendingGatt == null) {
+                        conn.pendingGatt = operation
+                        startNow = true
+                    } else {
+                        conn.queuedGatt.addLast(operation)
+                    }
+                    true
+                }
+            }
 
-        awaitSlot<Any?>(
-            get = { conn.pendingGatt?.cont },
-            set = { conn.pendingGatt = it?.let { cont -> PendingGatt(kind, cont) } },
-            start = start,
-        ) as T
-    }
+            if (!connected) {
+                cont.resumeWithException(notConnected())
+                return@suspendCancellableCoroutine
+            }
+
+            // A started Android operation cannot be canceled safely: retain it
+            // until its callback advances the FIFO. A queued operation can be
+            // removed before it reaches BluetoothGatt.
+            cont.invokeOnCancellation {
+                synchronized(stateLock) {
+                    conn.queuedGatt.remove(operation)
+                }
+            }
+
+            if (startNow) startGattChain(conn, operation)
+        } as T
 
     suspend fun awaitDisconnect(conn: DeviceConnection, start: () -> Unit): Unit =
         awaitSlot({ conn.pendingDisconnect }, { conn.pendingDisconnect = it }, start)
@@ -245,12 +307,34 @@ class ConnectionRegistry {
     suspend fun awaitBond(conn: DeviceConnection, start: () -> Unit): Boolean =
         awaitSlot({ conn.pendingBond }, { conn.pendingBond = it }, start)
 
-    /** Atomically takes the device's pending GATT op, if [expected] matches its kind. */
-    fun takeGatt(address: String, expected: (GattOp) -> Boolean): PendingGatt? =
+    /**
+     * Takes the matching in-flight operation and starts the next FIFO entry
+     * before returning. Callers can then resume the completed continuation;
+     * write-command throughput does not depend on that coroutine being
+     * dispatched or its Pigeon result reaching Flutter.
+     */
+    fun takeGatt(address: String, expected: (GattOp) -> Boolean): PendingGatt? {
+        var conn: DeviceConnection? = null
+        var completed: PendingGatt? = null
+        var next: PendingGatt? = null
         synchronized(stateLock) {
-            val conn = connections[address] ?: return@synchronized null
-            conn.pendingGatt?.takeIf { expected(it.kind) }?.also { conn.pendingGatt = null }
+            val currentConn = connections[address] ?: return@synchronized
+            val current = currentConn.pendingGatt ?: return@synchronized
+            if (!expected(current.kind)) return@synchronized
+
+            conn = currentConn
+            completed = current
+            next = currentConn.queuedGatt.pollFirst()
+            currentConn.pendingGatt = next
         }
+
+        val connection = conn
+        val following = next
+        if (connection != null && following != null) {
+            startGattChain(connection, following)
+        }
+        return completed
+    }
 
     /** Atomically takes the device's pending createBond continuation, if any. */
     fun takeBond(address: String): CancellableContinuation<Boolean>? =
@@ -268,6 +352,9 @@ class ConnectionRegistry {
                 conn.pendingDisconnect = null
                 conn.pendingGatt?.let { add(it.cont) }
                 conn.pendingGatt = null
+                while (conn.queuedGatt.isNotEmpty()) {
+                    add(conn.queuedGatt.removeFirst().cont)
+                }
                 conn.pendingBond?.let { add(it) }
                 conn.pendingBond = null
             }

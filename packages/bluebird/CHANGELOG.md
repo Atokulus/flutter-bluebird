@@ -3,7 +3,8 @@
 - Add configurable per-device operation queues for concurrent multi-device BLE
   connections while retaining global queueing as the default.
 - Pipeline consecutive write-without-response calls in per-device mode. The
-  platform can now accept a complete burst without a Dart round trip between
+  Android callback now starts the next native write before completing the
+  prior Flutter call, eliminating coroutine and platform-channel gaps between
   frames; response-bearing operations still wait for the burst to drain.
 - Serialize `setPreferredPhy` with other per-device GATT operations and avoid
   disabling notifications through a stale characteristic after rediscovery.
