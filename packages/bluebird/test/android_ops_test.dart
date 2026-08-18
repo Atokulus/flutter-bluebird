@@ -1,6 +1,9 @@
 @TestOn('vm')
 library;
 
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:bluebird/bluebird.dart';
 import 'package:bluebird_platform_interface/bluebird_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -37,6 +40,26 @@ void main() {
     await device.requestConnectionPriority(connectionPriorityRequest: ConnectionPriority.high);
     await device.setPreferredPhy(txPhy: {Phy.le2m}, rxPhy: {Phy.le2m}, option: PhyCoding.noPreferred);
     expect(fake.calls, containsAll(['requestConnectionPriority', 'setPreferredPhy']));
+  });
+
+  test('setPreferredPhy waits for an in-flight GATT operation', () async {
+    Bluebird.setOperationQueueMode(OperationQueueMode.perDevice);
+    final readRelease = Completer<Uint8List>();
+    fake.stubs['readCharacteristic'] = () => readRelease.future;
+
+    final characteristic = (await device.discoverServices(
+      subscribeToServicesChanged: false,
+    )).single.characteristics.single;
+    final read = characteristic.read();
+    await pumpEventQueue();
+
+    final phy = device.setPreferredPhy(txPhy: {Phy.le2m}, rxPhy: {Phy.le2m}, option: PhyCoding.noPreferred);
+    await pumpEventQueue();
+    expect(fake.calls.where((call) => call == 'setPreferredPhy'), isEmpty);
+
+    readRelease.complete(Uint8List(0));
+    await Future.wait([read, phy]);
+    expect(fake.calls.where((call) => call == 'setPreferredPhy'), hasLength(1));
   });
 
   test('clearGattCache delegates', () async {

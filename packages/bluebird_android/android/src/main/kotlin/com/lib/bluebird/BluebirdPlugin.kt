@@ -41,7 +41,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class BluebirdPlugin :
@@ -784,23 +783,11 @@ class BluebirdPlugin :
             "data longer than allowed. value.length: ${value.size} > max: $maxLen ($a$b)"
         }
 
-        suspend fun writeAndAwaitBufferSpace() {
-            // Android reports write-command progress through
-            // onCharacteristicWrite. Its callback is immediate while the
-            // controller buffer has room and delayed when it is full, making
-            // it the platform's write-without-response backpressure signal.
-            registry.awaitGatt<Unit>(conn, GattOp.WriteChar(chr)) {
-                gatt.writeCharacteristicCompat(chr, value, writeTypeInt)
-            }
-        }
-
-        if (writeType == BmWriteType.WITHOUT_RESPONSE) {
-            // Several Pigeon calls may now be resident here concurrently. Feed
-            // them through the one Android GATT slot in FIFO order, entirely
-            // natively, so each callback can start the next frame immediately.
-            conn.writeWithoutResponseMutex.withLock { writeAndAwaitBufferSpace() }
-        } else {
-            writeAndAwaitBufferSpace()
+        // Several write-command Pigeon calls may already be resident here.
+        // awaitGatt feeds them through the per-device native FIFO, while the
+        // callback supplies Android's controller-buffer backpressure.
+        registry.awaitGatt<Unit>(conn, GattOp.WriteChar(chr)) {
+            gatt.writeCharacteristicCompat(chr, value, writeTypeInt)
         }
     }
 
@@ -857,21 +844,6 @@ class BluebirdPlugin :
 
         val chr = resolveCharacteristicOrThrow(gatt, characteristic)
 
-        // configure local Android device to listen for characteristic changes
-        check(gatt.setCharacteristicNotification(chr, enable), BluebirdErrorCode.ANDROID_ERROR) {
-            "gatt.setCharacteristicNotification($enable) returned false"
-        }
-
-        // find cccd descriptor
-        val cccd = chr.descriptors.firstOrNull { Uuid(it.uuid) == CCCD }
-        if (cccd == null) {
-            // Some ble devices do not actually need their CCCD updated.
-            // thus setCharacteristicNotification() is all that is required to enable notifications.
-            // The arduino "bluno" devices are an example.
-            log(LogLevel.WARNING, "CCCD descriptor for characteristic not found: ${Uuid(chr.uuid)}")
-            return@launch true
-        }
-
         // determine value to write
         val descriptorValue: ByteArray
         if (enable) {
@@ -889,9 +861,31 @@ class BluebirdPlugin :
             descriptorValue = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
         }
 
-        // completes when the CCCD write confirms (onDescriptorWrite)
-        registry.awaitGatt(conn, GattOp.SetNotify(chr)) {
-            gatt.writeDescriptorCompat(cccd, descriptorValue, label = "cccd")
+        // Configure Android's local routing before changing the peer's CCCD.
+        // If the peer rejects the enable, roll local routing back so a retry
+        // starts from a known state instead of leaving a half-bound listener.
+        check(gatt.setCharacteristicNotification(chr, enable), BluebirdErrorCode.ANDROID_ERROR) {
+            "gatt.setCharacteristicNotification($enable) returned false"
+        }
+
+        val cccd = chr.descriptors.firstOrNull { Uuid(it.uuid) == CCCD }
+        if (cccd == null) {
+            // A few peripherals implement notification routing without exposing
+            // a CCCD. Preserve support for them, but make the fallback visible.
+            log(LogLevel.WARNING, "CCCD descriptor for characteristic not found: ${Uuid(chr.uuid)}")
+            return@launch true
+        }
+
+        try {
+            // Completes only after the peer confirms the CCCD write.
+            registry.awaitGatt(conn, GattOp.SetNotify(chr)) {
+                gatt.writeDescriptorCompat(cccd, descriptorValue, label = "cccd")
+            }
+        } catch (error: Throwable) {
+            if (enable && !gatt.setCharacteristicNotification(chr, false)) {
+                log(LogLevel.WARNING, "Failed to roll back local notification routing: ${Uuid(chr.uuid)}")
+            }
+            throw error
         }
     }
 

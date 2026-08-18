@@ -5,6 +5,8 @@
 - Pipeline consecutive write-without-response calls in per-device mode. The
   platform can now accept a complete burst without a Dart round trip between
   frames; response-bearing operations still wait for the burst to drain.
+- Serialize `setPreferredPhy` with other per-device GATT operations and avoid
+  disabling notifications through a stale characteristic after rediscovery.
 
 ## 0.4.2
 

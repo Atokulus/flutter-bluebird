@@ -441,7 +441,6 @@ class BluetoothDevice implements BluebirdLoggable {
       "setPreferredPhy",
       (p) => p.setPreferredPhy(remoteId, Phy.maskFrom(txPhy), Phy.maskFrom(rxPhy), option.index),
       timeout: timeout,
-      serialized: false,
     );
   }
 

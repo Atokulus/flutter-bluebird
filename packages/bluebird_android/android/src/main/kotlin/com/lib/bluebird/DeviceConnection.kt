@@ -16,6 +16,7 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Error for starting a second operation of a concurrency class while one is in flight. */
 internal fun operationInProgress() = FlutterError(
@@ -108,10 +109,11 @@ class DeviceConnection(
     var pendingBond: CancellableContinuation<Boolean>? = null
 
     /**
-     * Accepts a burst of write commands from Dart and feeds them into Android's
-     * single per-connection GATT slot without another Flutter round trip.
+     * Android exposes one callback-bearing GATT operation slot per connection.
+     * Keep every such operation in one native FIFO. This is also where bursts
+     * of write commands queue, avoiding a Flutter round trip between frames.
      */
-    val writeWithoutResponseMutex = Mutex()
+    val gattMutex = Mutex()
 
     /**
      * Fails the gatt & bond slots, e.g. when the device disconnects.
@@ -218,14 +220,24 @@ class ConnectionRegistry {
         }
     }
 
-    /** Suspends until the device's single in-flight GATT op slot is resumed by its callback. */
+    /**
+     * Runs one callback-bearing GATT operation in the device's native FIFO and
+     * suspends until its callback resumes the slot. Re-check the connection
+     * after waiting: another queued operation may have observed a disconnect.
+     */
     @Suppress("UNCHECKED_CAST")
-    suspend fun <T> awaitGatt(conn: DeviceConnection, kind: GattOp, start: () -> Unit): T =
+    suspend fun <T> awaitGatt(conn: DeviceConnection, kind: GattOp, start: () -> Unit): T = conn.gattMutex.withLock {
+        val stillConnected = synchronized(stateLock) {
+            connections[conn.address] === conn && conn.isConnected
+        }
+        if (!stillConnected) throw notConnected()
+
         awaitSlot<Any?>(
             get = { conn.pendingGatt?.cont },
             set = { conn.pendingGatt = it?.let { cont -> PendingGatt(kind, cont) } },
             start = start,
         ) as T
+    }
 
     suspend fun awaitDisconnect(conn: DeviceConnection, start: () -> Unit): Unit =
         awaitSlot({ conn.pendingDisconnect }, { conn.pendingDisconnect = it }, start)

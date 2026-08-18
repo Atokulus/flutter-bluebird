@@ -212,6 +212,20 @@ void main() {
       await expectLater(subscription.unsubscribe(), throwsA(isA<BluebirdException>()));
     });
 
+    test('unsubscribe does not disable through a stale discovery handle', () async {
+      final c = await discoverNotifyChar();
+      final subscription = await c.subscribe();
+      expect(fake.calls.where((call) => call == 'setNotifyValue'), hasLength(1));
+
+      await c.device.discoverServices(subscribeToServicesChanged: false);
+      expect(c.isValid, isFalse);
+      await subscription.unsubscribe();
+
+      // The old characteristic must not target a same-shaped attribute from
+      // the replacement GATT table.
+      expect(fake.calls.where((call) => call == 'setNotifyValue'), hasLength(1));
+    });
+
     test('cancelling notifications swallows a failed disable', () async {
       final c = await discoverNotifyChar();
       final sub = c.notifications.listen((_) {});

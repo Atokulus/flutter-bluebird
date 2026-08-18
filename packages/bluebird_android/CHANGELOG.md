@@ -2,6 +2,10 @@
 
 - Queue concurrent write commands per connection inside the native plugin and
   advance the queue from Android's buffer-capacity callbacks.
+- Serialize every callback-bearing GATT operation through one native per-device
+  FIFO, preventing PHY/MTU/CCCD/read/write callback-slot collisions while
+  preserving native write-command pipelining.
+- Roll back local notification routing when enabling the peer CCCD fails.
 
 ## 0.4.1
 
