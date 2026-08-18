@@ -878,7 +878,10 @@ class BluebirdPlugin :
 
         try {
             // Completes only after the peer confirms the CCCD write.
-            registry.awaitGatt(conn, GattOp.SetNotify(chr)) {
+            // Keep the generic explicit: without it Kotlin can infer Nothing
+            // for this try/catch expression and throw KotlinNothingValueException
+            // after a successful onDescriptorWrite callback.
+            registry.awaitGatt<Boolean>(conn, GattOp.SetNotify(chr)) {
                 gatt.writeDescriptorCompat(cccd, descriptorValue, label = "cccd")
             }
         } catch (error: Throwable) {

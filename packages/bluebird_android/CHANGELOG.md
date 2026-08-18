@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Fix successful CCCD writes being reported as `KotlinNothingValueException`,
+  which immediately rolled back notification routing and broke discovery.
 - Queue concurrent write commands per connection inside the native plugin and
   advance the queue from Android's buffer-capacity callbacks.
 - Serialize every callback-bearing GATT operation through one native per-device
